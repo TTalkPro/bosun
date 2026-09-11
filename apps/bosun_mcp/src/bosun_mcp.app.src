@@ -1,0 +1,11 @@
+{application, bosun_mcp, [
+    {description, "Bosun MCP tools, resources, prompts and per-session identity"},
+    {vsn, "0.1.0"},
+    {registered, [bosun_mcp_sup, bosun_identity]},
+    {mod, {bosun_mcp_app, []}},
+    {applications, [kernel, stdlib, bosun_core, beamai_mcp]},
+    {env, []},
+    {modules, []},
+    {licenses, ["Apache-2.0"]},
+    {links, []}
+]}.

@@ -1,0 +1,6 @@
+## 生产 VM 参数。单机部署不需要分布式，节点名 / cookie 仅供 `bin/bosun remote_console` 用。
+-sname bosun
+-setcookie bosun_change_me
++K true
++A 16
+-kernel logger_level notice

@@ -1,0 +1,15 @@
+{application, bosun_web, [
+    {description, "Bosun HTTP: REST API for the web UI, MCP endpoint, static SPA"},
+    {vsn, "0.1.0"},
+    {registered, [bosun_web_sup]},
+    {mod, {bosun_web_app, []}},
+    {applications, [kernel, stdlib, cowboy, bosun_core, beamai_mcp, bosun_mcp]},
+    {env, [
+        {ip, {127,0,0,1}},
+        {port, 4000},
+        {static_dir, priv}
+    ]},
+    {modules, []},
+    {licenses, ["Apache-2.0"]},
+    {links, []}
+]}.

@@ -1,0 +1,30 @@
+# Bosun systemd 单元（以 release 方式运行）
+#
+# 安装：
+#   sudo useradd -r -s /usr/sbin/nologin bosun
+#   sudo mkdir -p /opt/bosun /var/lib/bosun && sudo tar xzf bosun-0.1.0.tar.gz -C /opt/bosun
+#   sudo chown -R bosun:bosun /opt/bosun /var/lib/bosun
+#   sudo cp deploy/bosun.service /etc/systemd/system/
+#   sudo cp deploy/bosun.env /etc/bosun.env      # 改端口 / 数据目录
+#   sudo systemctl daemon-reload && sudo systemctl enable --now bosun
+#   journalctl -u bosun -f
+[Unit]
+Description=Bosun task manager (REST + MCP)
+After=network.target
+
+[Service]
+Type=simple
+User=bosun
+Group=bosun
+WorkingDirectory=/opt/bosun
+EnvironmentFile=-/etc/bosun.env
+# foreground 把日志打到 stdout，交给 journald；SIGTERM 会走 init:stop 优雅关闭（mnesia / bitcask 正常 close）
+ExecStart=/opt/bosun/bin/bosun foreground
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

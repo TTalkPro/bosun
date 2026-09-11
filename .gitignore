@@ -1,0 +1,30 @@
+# Erlang / rebar3
+_build/
+_checkouts/
+*.beam
+*.plt
+erl_crash.dump
+rebar3.crashdump
+MnesiaCore.*
+data/
+priv/static/
+apps/bosun_web/priv/static/
+apps/bosun_core/priv/workflow/
+logs/
+
+# Node / Vite
+node_modules/
+web/dist/
+web/*.tsbuildinfo
+.turbo/
+.vite/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Claude / tools
+.claude/settings.local.json
+.playwright-mcp/
