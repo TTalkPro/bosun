@@ -7,6 +7,8 @@
 %%%   ▼  │         ▼
 %%%  REJECTED ◀────┤                          (执行方拒绝需求；REJECTED ──▶ NEW 重新提交)
 %%%  CANCELLED ◀───┘                          (不做了：过时 / 不需要；CANCELLED ──▶ NEW 恢复)
+%%%
+%%%  步骤迁移会在同一事务里级联同步所属 Epic（全部完成 → 自动 DONE；步骤重开 → 回 IN_PROGRESS）。
 %%%-------------------------------------------------------------------
 -module(bosun_task_status).
 
@@ -95,7 +97,7 @@ transition(TaskId0, To0, Opts) ->
                 {{error, _} = E, _} -> E;
                 {_, {error, _} = E} -> E;
                 {{ok, Commits}, {ok, Tests}} ->
-                    bosun_task:indexed(bosun_store:transaction(fun() ->
+                    case bosun_store:transaction(fun() ->
                         case mnesia:read(task, TaskId, write) of
                             [] -> bosun_store:abort(not_found);
                             [#task{status = From} = T] ->
@@ -117,13 +119,72 @@ transition(TaskId0, To0, Opts) ->
                                                                    {_, _, Keep} -> Keep
                                                                end},
                                         ok = mnesia:write(T1),
-                                        bosun_json:task_full(T1, bosun_feedback:read_in_tx(TaskId))
+                                        Touched = sync_epic_in_tx(T1, Actor, Now),
+                                        {bosun_json:task_full(T1, bosun_feedback:read_in_tx(TaskId)), Touched}
                                 end
                         end
-                    end))
+                    end) of
+                        {ok, {Json, Touched}} ->
+                            reindex_epic(Touched),
+                            bosun_task:indexed({ok, Json});
+                        {error, _} = E -> E
+                    end
             end;
         {{error, _} = E, _} -> E;
         {_, {error, _} = E} -> E
+    end.
+
+%%====================================================================
+%% Epic 自动流转
+%%====================================================================
+
+%% 步骤迁移后同步所属 Epic（同一事务内，见 designs/03 §自动流转）：
+%% - 全部步骤 DONE / VERIFIED / CANCELLED 且至少一个 DONE / VERIFIED → Epic 自动 → DONE
+%% - DONE / VERIFIED 的 Epic 因步骤重开不再满足上一条 → 自动回 IN_PROGRESS
+%% CANCELLED / REJECTED 的 Epic 不碰。用 index_read（而非 bosun_task:children/1 的脏读）
+%% 才能看到本事务刚写入的状态。返回被改动的 Epic id（没动则 undefined），供提交后重建索引。
+-spec sync_epic_in_tx(#task{}, binary(), integer()) -> undefined | binary().
+sync_epic_in_tx(#task{epic = undefined}, _Actor, _Now) -> undefined;
+sync_epic_in_tx(#task{epic = EpicId}, Actor, Now) ->
+    case mnesia:read(task, EpicId, write) of
+        [#task{status = From} = Epic] when From =:= new; From =:= in_progress;
+                                           From =:= done; From =:= verified ->
+            Complete = epic_complete(mnesia:index_read(task, EpicId, #task.epic)),
+            WasDone = From =:= done orelse From =:= verified,
+            case {Complete, WasDone} of
+                {true, false} ->
+                    Entry = auto_entry(From, done, Actor, <<"all steps completed (auto)">>, Now),
+                    ok = mnesia:write(Epic#task{status = done,
+                                                history = [Entry | Epic#task.history],
+                                                updated_at = Now}),
+                    EpicId;
+                {false, true} ->
+                    Entry = auto_entry(From, in_progress, Actor, <<"step reopened (auto)">>, Now),
+                    ok = mnesia:write(Epic#task{status = in_progress,
+                                                history = [Entry | Epic#task.history],
+                                                updated_at = Now}),
+                    EpicId;
+                _ -> undefined
+            end;
+        _ -> undefined
+    end.
+
+%% 全部步骤完成：没有 NEW / IN_PROGRESS / REJECTED 的步骤，且至少一个 DONE / VERIFIED
+epic_complete([]) -> false;
+epic_complete(Kids) ->
+    lists:all(fun(#task{status = S}) -> S =:= done orelse S =:= verified orelse S =:= cancelled end, Kids)
+    andalso lists:any(fun(#task{status = S}) -> S =:= done orelse S =:= verified end, Kids).
+
+auto_entry(From, To, Actor, Comment, Now) ->
+    #{from => From, to => To, actor => Actor, comment => Comment, at => Now,
+      commits => [], tests => undefined}.
+
+%% Epic 在同一事务里被级联改了状态，提交后重建它的搜索索引（索引里带 status 元数据）
+reindex_epic(undefined) -> ok;
+reindex_epic(EpicId) ->
+    case bosun_task:get(EpicId) of
+        {ok, Epic} -> bosun_search:index_task(Epic);
+        _ -> ok
     end.
 
 %%====================================================================

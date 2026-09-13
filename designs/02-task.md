@@ -23,7 +23,7 @@
 
 ### Epic
 
-Epic 是 `kind = epic` 的任务：一个整体目标，普通任务通过 `epic` 字段挂上去作为步骤（可跨项目）。它有自己的状态 / 反馈 / 历史，走同一个状态机；`progress = #{total, done, by_status}` 由步骤派生（done = 已验收数，撤销 / 拒绝的算 total 不算 done），不落库。校验：`epic` 必须指向存在且 `kind = epic` 的任务；Epic 不能再挂 Epic；`kind` 建单后不可改；update `epic = ""` 摘掉。列表过滤 `kind` / `epic`；`task` 表对 `epic` 建索引（`bosun_store:ensure_indexes/0` 给老表补索引）。
+Epic 是 `kind = epic` 的任务：一个整体目标，普通任务通过 `epic` 字段挂上去作为步骤（可跨项目）。它有自己的状态 / 反馈 / 历史，走同一个状态机；`progress = #{total, done, by_status}` 由步骤派生（done = 已完成数，DONE 或 VERIFIED 都算；撤销 / 拒绝的算 total 不算 done），不落库。Epic 状态随步骤自动流转（见 03）：全部步骤进入 DONE / VERIFIED / CANCELLED 且至少一个 DONE / VERIFIED 时自动 → DONE，步骤重开导致不再满足时自动回 IN_PROGRESS。校验：`epic` 必须指向存在且 `kind = epic` 的任务；Epic 不能再挂 Epic；`kind` 建单后不可改；update `epic = ""` 摘掉。列表过滤 `kind` / `epic`；`task` 表对 `epic` 建索引（`bosun_store:ensure_indexes/0` 给老表补索引）。
 
 ### 任务 ID
 

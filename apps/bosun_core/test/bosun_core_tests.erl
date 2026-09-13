@@ -25,6 +25,7 @@ core_test_() ->
         {"workflow doc", fun workflow_doc/0},
         {"roles, commits, tests & self-verify", fun roles_and_evidence/0},
         {"epics", fun epics/0},
+        {"epic auto flow", fun epic_auto_flow/0},
         {"links", fun links/0}
     ],
     {foreach, fun setup/0, fun teardown/1,
@@ -475,6 +476,58 @@ epics() ->
     {ok, #{<<"total">> := 2}} = bosun_task:list(<<"EP">>, #{<<"kind">> => <<"task">>}),
     {ok, #{<<"tasks">> := [#{<<"id">> := <<"EP-2">>}]}} = bosun_task:list(<<"EP">>, #{<<"epic">> => <<"ep-1">>}),
     ?assertMatch({error, {invalid, kind, _}}, bosun_task:list(<<"EP">>, #{<<"kind">> => <<"bug">>})).
+
+epic_auto_flow() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"EA">>, <<"name">> => <<"a">>}),
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"EB">>, <<"name">> => <<"b">>}),
+    {ok, _} = bosun_task:create(<<"EA">>, #{<<"title">> => <<"ship it">>, <<"kind">> => <<"epic">>}),
+    {ok, _} = bosun_task:create(<<"EA">>, #{<<"title">> => <<"step 1">>, <<"epic">> => <<"EA-1">>}),
+    {ok, _} = bosun_task:create(<<"EA">>, #{<<"title">> => <<"step 2">>, <<"epic">> => <<"EA-1">>}),
+    %% 步骤到 DONE 就计入进度（不再等验收）
+    {ok, _} = bosun_task_status:transition(<<"EA-2">>, <<"IN_PROGRESS">>, #{actor => <<"a">>}),
+    {ok, _} = bosun_task_status:transition(<<"EA-2">>, <<"DONE">>, #{actor => <<"a">>}),
+    {ok, P1} = bosun_task:get(<<"EA-1">>),
+    ?assertMatch(#{<<"total">> := 2, <<"done">> := 1,
+                   <<"by_status">> := #{<<"DONE">> := 1, <<"NEW">> := 1}}, maps:get(<<"progress">>, P1)),
+    ?assertEqual(<<"NEW">>, maps:get(<<"status">>, P1)),
+    %% 步骤全部完成（Epic 还在 NEW）→ Epic 自动 → DONE
+    {ok, _} = bosun_task_status:transition(<<"EA-3">>, <<"IN_PROGRESS">>, #{actor => <<"a">>}),
+    {ok, _} = bosun_task_status:transition(<<"EA-3">>, <<"DONE">>, #{actor => <<"a">>}),
+    {ok, P2} = bosun_task:get(<<"EA-1">>),
+    ?assertEqual(<<"DONE">>, maps:get(<<"status">>, P2)),
+    [AutoDone | _] = maps:get(<<"history">>, P2),
+    ?assertEqual(<<"DONE">>, maps:get(<<"to">>, AutoDone)),
+    ?assertEqual(<<"NEW">>, maps:get(<<"from">>, AutoDone)),
+    ?assertEqual(<<"all steps completed (auto)">>, maps:get(<<"comment">>, AutoDone)),
+    ?assertEqual(<<"a">>, maps:get(<<"actor">>, AutoDone)),
+    %% 步骤打回 → Epic 自动回 IN_PROGRESS
+    {ok, _} = bosun_task_status:transition(<<"EA-3">>, <<"IN_PROGRESS">>, #{actor => <<"b">>}),
+    {ok, P3} = bosun_task:get(<<"EA-1">>),
+    ?assertEqual(<<"IN_PROGRESS">>, maps:get(<<"status">>, P3)),
+    [AutoReopen | _] = maps:get(<<"history">>, P3),
+    ?assertEqual(<<"IN_PROGRESS">>, maps:get(<<"to">>, AutoReopen)),
+    ?assertEqual(<<"DONE">>, maps:get(<<"from">>, AutoReopen)),
+    ?assertEqual(<<"step reopened (auto)">>, maps:get(<<"comment">>, AutoReopen)),
+    %% CANCELLED 的步骤不阻塞完成：step 2 撤销后剩一个 DONE → Epic 再次自动 DONE
+    {ok, _} = bosun_task_status:transition(<<"EA-3">>, <<"CANCELLED">>, #{actor => <<"b">>}),
+    {ok, P4} = bosun_task:get(<<"EA-1">>),
+    ?assertEqual(<<"DONE">>, maps:get(<<"status">>, P4)),
+    ?assertMatch(#{<<"total">> := 2, <<"done">> := 1}, maps:get(<<"progress">>, P4)),
+    %% CANCELLED 的 Epic 不参与自动流转
+    {ok, _} = bosun_task:create(<<"EA">>, #{<<"title">> => <<"later">>, <<"kind">> => <<"epic">>}),
+    {ok, _} = bosun_task:create(<<"EA">>, #{<<"title">> => <<"step">>, <<"epic">> => <<"EA-4">>}),
+    {ok, _} = bosun_task_status:transition(<<"EA-4">>, <<"CANCELLED">>, #{actor => <<"a">>}),
+    {ok, _} = bosun_task_status:transition(<<"EA-5">>, <<"IN_PROGRESS">>, #{actor => <<"a">>}),
+    {ok, _} = bosun_task_status:transition(<<"EA-5">>, <<"DONE">>, #{actor => <<"a">>}),
+    {ok, P5} = bosun_task:get(<<"EA-4">>),
+    ?assertEqual(<<"CANCELLED">>, maps:get(<<"status">>, P5)),
+    %% 跨项目步骤同样触发：EA 的任务挂到 EB 的 Epic 上
+    {ok, _} = bosun_task:create(<<"EB">>, #{<<"title">> => <<"cross epic">>, <<"kind">> => <<"epic">>}),
+    {ok, _} = bosun_task:create(<<"EA">>, #{<<"title">> => <<"far step">>, <<"epic">> => <<"EB-1">>}),
+    {ok, _} = bosun_task_status:transition(<<"EA-6">>, <<"IN_PROGRESS">>, #{actor => <<"a">>}),
+    {ok, _} = bosun_task_status:transition(<<"EA-6">>, <<"DONE">>, #{actor => <<"a">>}),
+    {ok, P6} = bosun_task:get(<<"EB-1">>),
+    ?assertEqual(<<"DONE">>, maps:get(<<"status">>, P6)).
 
 links() ->
     {ok, _} = bosun_project:create(#{<<"key">> => <<"LN">>, <<"name">> => <<"l">>}),

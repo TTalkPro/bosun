@@ -190,7 +190,7 @@ children(EpicId) ->
     Kids = mnesia:dirty_index_read(task, EpicId, #task.epic),
     lists:sort(fun(A, B) -> {A#task.project_key, A#task.seq} =< {B#task.project_key, B#task.seq} end, Kids).
 
-%% @doc Epic 进度：子任务按状态计数；done = 已验收数。
+%% @doc Epic 进度：子任务按状态计数；done = 已完成数（DONE 或 VERIFIED）。
 -spec progress(binary()) -> map().
 progress(EpicId) ->
     Kids = children(EpicId),
@@ -198,7 +198,7 @@ progress(EpicId) ->
                                maps:update_with(bosun_task_status:to_binary(S), fun(N) -> N + 1 end, 1, Acc)
                            end, #{}, Kids),
     #{<<"total">> => length(Kids),
-      <<"done">> => length([K || #task{status = verified} = K <- Kids]),
+      <<"done">> => length([1 || #task{status = S} <- Kids, S =:= done orelse S =:= verified]),
       <<"by_status">> => ByStatus}.
 
 %% @doc 批量读摘要；非法或不存在的 ID 静默跳过。

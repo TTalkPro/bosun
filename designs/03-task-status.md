@@ -31,6 +31,15 @@
 
 其余一律 `{invalid_transition, From, To}`，错误文本带上可用的目标状态。NEW → IN_PROGRESS 还要求没有未满足的依赖（见 12）：否则 `{blocked, [Ids]}`。DONE / VERIFIED 不能撤销（做完的只能重开）。REJECTED 与 CANCELLED 的区别：前者是执行方说「需求不对」，要提出方改；后者是谁都可以说「不需要了」。
 
+### 自动流转：Epic 随步骤级联
+
+上表管**手动**迁移。步骤（挂在该 Epic 下的任务，见 02）迁移时，同一事务内同步 Epic 自身状态，不走迁移表（与 12 的「替代自动撤销」同一模式）：
+
+- 全部步骤进入 DONE / VERIFIED / CANCELLED 且至少一个 DONE / VERIFIED → Epic 自动 `→ DONE`（从 NEW / IN_PROGRESS），历史备注 `all steps completed (auto)`
+- DONE / VERIFIED 的 Epic 因步骤重开不再满足上一条 → 自动 `→ IN_PROGRESS`，历史备注 `step reopened (auto)`
+
+CANCELLED / REJECTED 的 Epic 不参与自动流转（保持人工控制）。自动条目的 actor 记为触发步骤迁移的操作者，`commits` / `tests` 为空。
+
 **跨项目场景**：任务常由一方提出、另一方执行——例如 coxswain 项目的 Agent 给 keel 建任务，keel 的 Agent 执行，coxswain 验收；keel 也可以认为需求不合理，写 review 后置为 `REJECTED`，coxswain 改完需求再「重新提交」回 `NEW`。因此 `actor` / `author` 必须是能标识来源的稳定名字（建议用项目 Key）。
 
 ## 3. 历史记录

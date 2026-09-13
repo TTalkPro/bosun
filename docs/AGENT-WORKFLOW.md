@@ -73,7 +73,7 @@ NEW ──→ IN_PROGRESS ──→ DONE ──→ VERIFIED
 
 ## 4b. Epic
 
-一个大目标拆成多步时，先建 Epic（`create_task(kind="epic")`），再把步骤任务用 `epic="KEY-N"` 挂上去（建单时给，或 `update_task(epic=...)`）。Epic 有自己的状态和反馈：步骤全部验收后，由提出方把 Epic 置 VERIFIED。`get_task` 一个 Epic 会返回 `children`（步骤）和 `progress`（已验收 / 总数）；`list_tasks(epic="KEY-N")` 或 BQL `epic = KEY-N` 列步骤。步骤可以跨项目。
+一个大目标拆成多步时，先建 Epic（`create_task(kind="epic")`），再把步骤任务用 `epic="KEY-N"` 挂上去（建单时给，或 `update_task(epic=...)`）。Epic 有自己的状态和反馈：步骤全部完成后 Epic 自动置为 DONE（进度里 DONE / VERIFIED 都算完成；步骤重开会把 Epic 拉回 IN_PROGRESS），之后由提出方把 Epic 置 VERIFIED。`get_task` 一个 Epic 会返回 `children`（步骤）和 `progress`（已完成 / 总数）；`list_tasks(epic="KEY-N")` 或 BQL `epic = KEY-N` 列步骤。步骤可以跨项目。
 
 ## 4c. 关联：依赖与替代
 

@@ -11,7 +11,7 @@
 
 1. 多项目管理（Key 成为任务 ID 前缀）
 2. 项目内任务，ID 自动分配：`BOS-12`
-2b. Epic：`kind = epic` 的任务作为整体目标，普通任务用 `epic` 挂上去作为步骤，进度按已验收步骤数派生
+2b. Epic：`kind = epic` 的任务作为整体目标，普通任务用 `epic` 挂上去作为步骤，进度按已完成（DONE / VERIFIED）步骤数派生；步骤全部完成后 Epic 自动置为 DONE
 2c. 任务关联：`replaces`（替代，对方自动撤销）/ `depends_on`（依赖，对方没做完不能开始，成环拒绝）
 3. 任务状态 `NEW → IN_PROGRESS → DONE → VERIFIED`（可打回 / 重开；执行方可 `REJECTED`，提出方重新提交；不需要了可 `CANCELLED`，可恢复）
 4. 任务 Feedback（不可变；作者可修订 = 新版本 + 旧版本作废，线索完整；`comment / review / question / answer`）

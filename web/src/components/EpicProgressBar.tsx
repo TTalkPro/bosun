@@ -2,7 +2,7 @@ import { Box, LinearProgress, Stack, Tooltip, Typography } from '@mui/material';
 import type { EpicProgress } from '@/api/types';
 import { STATUS_LABEL } from '@/features/tasks/status';
 
-// Epic 进度条：已验收 / 总数；tooltip 列各状态数量
+// Epic 进度条：已完成 / 总数（DONE、VERIFIED 都算完成）；tooltip 列各状态数量
 const EpicProgressBar = ({ progress, width = 120, showText = true }: { progress: EpicProgress; width?: number | string; showText?: boolean }) => {
   const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
   const detail = Object.entries(progress.by_status).map(([s, n]) => `${STATUS_LABEL[s as keyof typeof STATUS_LABEL]} ${n}`).join(' · ') || '还没有步骤';
