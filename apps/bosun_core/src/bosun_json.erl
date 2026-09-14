@@ -52,6 +52,7 @@ project_to_map(#project{} = P) ->
       <<"description">> => P#project.description,
       <<"task_count">> => P#project.task_seq,
       <<"archived">> => P#project.archived,
+      <<"org_id">> => P#project.org_id,
       <<"created_at">> => iso8601(P#project.created_at),
       <<"updated_at">> => iso8601(P#project.updated_at)}.
 
