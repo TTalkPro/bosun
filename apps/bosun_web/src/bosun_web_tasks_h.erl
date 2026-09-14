@@ -19,7 +19,8 @@ handle(project_tasks, <<"GET">>, Req) ->
 handle(project_tasks, <<"POST">>, Req) ->
     Key = cowboy_req:binding(key, Req),
     with_body(Req, fun(Body, Req1) ->
-        Input = Body#{<<"actor_kind">> => maps:get(<<"actor_kind">>, Body, <<"human">>)},
+        #{actor := Actor} = bosun_web_auth:actor_fields(Req1),
+        Input = Body#{<<"actor">> => Actor, <<"actor_kind">> => <<"human">>},
         reply_result(201, bosun_task:create(Key, Input), Req1)
     end);
 handle(project_tasks, _, Req) ->
@@ -36,8 +37,7 @@ handle(task, _, Req) ->
 handle(transition, <<"POST">>, Req) ->
     Id = cowboy_req:binding(id, Req),
     with_body(Req, fun(Body, Req1) ->
-        Opts = #{actor => maps:get(<<"actor">>, Body, <<"user">>),
-                 actor_kind => maps:get(<<"actor_kind">>, Body, <<"human">>),
+        Opts = (bosun_web_auth:actor_fields(Req1))#{
                  comment => maps:get(<<"comment">>, Body, undefined),
                  commits => maps:get(<<"commits">>, Body, []),
                  tests => maps:get(<<"tests">>, Body, undefined)},
@@ -46,12 +46,11 @@ handle(transition, <<"POST">>, Req) ->
 handle(transition, _, Req) ->
     method_not_allowed(Req, <<"POST">>);
 
-%% 关联：POST {to, type, actor} 建链 → 201 本任务详情；DELETE /links/:type/:to → 200 本任务详情
+%% 关联：POST {to, type} 建链 → 201 本任务详情；DELETE /links/:type/:to → 200 本任务详情
 handle(links, <<"POST">>, Req) ->
     Id = cowboy_req:binding(id, Req),
     with_body(Req, fun(Body, Req1) ->
-        Opts = #{actor => maps:get(<<"actor">>, Body, <<"user">>),
-                 actor_kind => maps:get(<<"actor_kind">>, Body, <<"human">>)},
+        Opts = bosun_web_auth:actor_fields(Req1),
         reply_result(201, bosun_link:add(Id, maps:get(<<"to">>, Body, <<>>), maps:get(<<"type">>, Body, <<>>), Opts), Req1)
     end);
 handle(links, _, Req) ->

@@ -10,8 +10,8 @@
          query_map/1, with_body/2, method_not_allowed/2]).
 
 %% 兜底：/api 下没匹配的路径
-init(Req, not_found) ->
-    {ok, reply_error(Req, not_found), not_found}.
+init(Req, State) ->
+    {ok, reply_error(Req, not_found), State}.
 
 %% @doc 读取并解析 JSON body。空 body 视为 #{}。
 -spec read_json(cowboy_req:req()) -> {ok, map(), cowboy_req:req()} | {error, term(), cowboy_req:req()}.
@@ -95,6 +95,28 @@ error_to_http({cycle, Path}) ->
     {409, #{<<"error">> => <<"cycle">>,
             <<"message">> => bosun_mcp:error_to_text({cycle, Path}),
             <<"detail">> => #{<<"path">> => Path}}};
+%% 认证（13）
+error_to_http(unauthorized) ->
+    {401, #{<<"error">> => <<"unauthorized">>, <<"message">> => <<"authentication required">>}};
+error_to_http(forbidden_role) ->
+    {403, #{<<"error">> => <<"forbidden">>, <<"message">> => <<"organization admin only">>}};
+error_to_http(invalid_credentials) ->
+    {401, #{<<"error">> => <<"invalid_credentials">>, <<"message">> => <<"wrong email or password">>}};
+error_to_http(user_disabled) ->
+    {403, #{<<"error">> => <<"user_disabled">>, <<"message">> => <<"this account is disabled">>}};
+error_to_http(code_expired) ->
+    {400, #{<<"error">> => <<"code_expired">>, <<"field">> => <<"code">>,
+            <<"message">> => <<"verification code expired or not requested; request a new one">>}};
+error_to_http(code_mismatch) ->
+    {400, #{<<"error">> => <<"code_mismatch">>, <<"field">> => <<"code">>, <<"message">> => <<"wrong verification code">>}};
+error_to_http({too_many_requests, Secs}) ->
+    {429, #{<<"error">> => <<"too_many_requests">>, <<"message">> => <<"a code was sent recently; retry later">>,
+            <<"detail">> => #{<<"retry_after">> => Secs}}};
+error_to_http({mail_failed, Why}) ->
+    logger:error("bosun_mailer failed: ~p", [Why]),
+    {502, #{<<"error">> => <<"mail_failed">>, <<"message">> => <<"could not send the verification email">>}};
+error_to_http(last_admin) ->
+    {409, #{<<"error">> => <<"last_admin">>, <<"message">> => <<"the organization must keep at least one active admin">>}};
 error_to_http(search_unavailable) ->
     {503, #{<<"error">> => <<"search_unavailable">>, <<"message">> => <<"search index is not available">>}};
 error_to_http(method_not_allowed) ->

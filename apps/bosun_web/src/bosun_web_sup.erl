@@ -17,7 +17,8 @@ init([]) ->
     Dispatch = bosun_web_router:dispatch(),
     {ok, _} = cowboy:start_clear(bosun_http,
                                  [{ip, Ip}, {port, Port}],
-                                 #{env => #{dispatch => Dispatch}}),
+                                 #{env => #{dispatch => Dispatch},
+                                   middlewares => bosun_web_router:middlewares()}),
     logger:notice("bosun listening on http://~s:~b (REST /api/v1, MCP /mcp)",
                   [inet:ntoa(Ip), port()]),
     {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, []}}.
