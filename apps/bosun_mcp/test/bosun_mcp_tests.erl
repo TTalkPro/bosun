@@ -16,7 +16,8 @@ mcp_test_() ->
         {"query & filters", fun query_and_filters/0},
         {"epics", fun epics/0},
         {"links", fun links/0},
-        {"session identity", fun session_identity/0}
+        {"session identity", fun session_identity/0},
+        {"bound user & org scope", fun bound_user_scope/0}
     ],
     {foreach, fun setup/0, fun(_) -> ok end,
      [fun(_) -> T end || T <- Tests]}.
@@ -235,6 +236,49 @@ session_identity() ->
     ?assert(lists:member(<<"keel/wt1">>, [maps:get(<<"name">>, A) || A <- Actors])),
     {error, E} = call(<<"identify">>, #{<<"name">> => <<" ">>}),
     ?assertMatch(<<"invalid name", _/binary>>, E).
+
+%% 会话绑了 API key 的主人（bosun_web_auth 每个请求做的事）：whoami 带 user，
+%% 工具只看该组织的数据；identify 不覆盖 user
+bound_user_scope() ->
+    {A, B} = {register_org(<<"Acme">>, <<"alice@acme.io">>, <<"Alice">>),
+              register_org(<<"Beta">>, <<"bob@beta.io">>, <<"Bob">>)},
+    {ok, #{<<"key">> := <<"ACM">>}} = in_session(fun() ->
+        bosun_identity:bind(self(), A),
+        {ok, #{<<"identified">> := false, <<"user">> := #{<<"name">> := <<"Alice">>, <<"email">> := <<"alice@acme.io">>}}} = call(<<"whoami">>, #{}),
+        {ok, #{<<"identified">> := true, <<"name">> := <<"acme/wt">>, <<"user">> := #{<<"name">> := <<"Alice">>}}} =
+            call(<<"identify">>, #{<<"name">> => <<"acme/wt">>}),
+        {ok, #{<<"key">> := <<"ACM">>}} = call(<<"create_project">>, #{<<"key">> => <<"ACM">>, <<"name">> => <<"Acme">>}),
+        {ok, #{<<"created_by">> := <<"acme/wt">>}} = call(<<"create_task">>, #{<<"project_key">> => <<"ACM">>, <<"title">> => <<"secret">>}),
+        %% Agent 记在 key 主人名下
+        {ok, #{<<"actors">> := As}} = call(<<"list_actors">>, #{}),
+        ?assertMatch([_], [x || #{<<"name">> := <<"acme/wt">>, <<"user_id">> := U} <- As, U =:= maps:get(user_id, A)]),
+        call(<<"get_project">>, #{<<"key">> => <<"ACM">>})
+    end),
+    in_session(fun() ->
+        bosun_identity:bind(self(), B),
+        {ok, #{<<"projects">> := []}} = call(<<"list_projects">>, #{}),
+        {error, E1} = call(<<"get_task">>, #{<<"task_id">> => <<"ACM-1">>}),
+        ?assertMatch(<<"not found", _/binary>>, E1),
+        {error, E2} = call(<<"create_task">>, #{<<"project_key">> => <<"ACM">>, <<"title">> => <<"x">>}),
+        ?assertMatch(<<"project not found", _/binary>>, E2),
+        {ok, #{<<"tasks">> := []}} = call(<<"query_tasks">>, #{<<"bql">> => <<"project = ACM">>}),
+        {error, E3} = call(<<"create_project">>, #{<<"key">> => <<"ACM">>, <<"name">> => <<"mine">>}),
+        ?assertMatch(<<"project key already exists", _/binary>>, E3),
+        %% 资源也按组织
+        [Res | _] = bosun_mcp:resources(),
+        {ok, Json} = (element(#mcp_resource.handler, Res))(),
+        ?assertMatch(#{<<"projects">> := []}, json:decode(Json))
+    end),
+    ok.
+
+register_org(OrgName, Email, Name) ->
+    {ok, _} = bosun_org:request_code(Email),
+    {ok, Code} = bosun_email_code:peek(Email),
+    {ok, #{<<"user">> := #{<<"id">> := Uid}}} =
+        bosun_org:register(#{<<"org_name">> => OrgName, <<"email">> => Email, <<"code">> => Code,
+                             <<"name">> => Name, <<"password">> => <<"secret123">>}),
+    {ok, P} = bosun_user:principal(Uid, #{via => api_key}),
+    P.
 
 epics() ->
     {ok, _} = call(<<"create_project">>, #{<<"key">> => <<"EM">>, <<"name">> => <<"e">>}),

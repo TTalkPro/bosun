@@ -12,14 +12,15 @@
 -module(bosun_identity).
 -behaviour(gen_server).
 
--export([start_link/0, identify/1, current/0, current/1, lookup/1, to_map/1]).
+-export([start_link/0, identify/1, bind/2, current/0, current/1, lookup/1, to_map/1, principal/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(TAB, bosun_identity).
 
+%% user：这个会话用的 API key 的主人（bosun_web_auth 每个请求绑一次），决定数据作用域
 -type identity() :: #{name := binary(), kind := human | agent,
                       project => binary() | undefined, worktree => binary() | undefined,
-                      explicit := boolean()}.
+                      explicit := boolean(), user => bosun_scope:principal() | undefined}.
 -export_type([identity/0]).
 
 start_link() ->
@@ -44,10 +45,33 @@ identify(Args) ->
                            <<>> -> undefined;
                            W -> W
                        end,
-            Id = #{name => Name, kind => Kind, project => Project, worktree => Worktree, explicit => true},
+            User = case lookup(self()) of
+                       {ok, #{user := U}} -> U;
+                       _ -> undefined
+                   end,
+            Id = #{name => Name, kind => Kind, project => Project, worktree => Worktree, explicit => true, user => User},
             ok = gen_server:call(?MODULE, {set, self(), Id}),
-            ok = bosun_actor:touch(Name, Kind, #{project => Project, worktree => Worktree}),
+            ok = bosun_scope:with(User, fun() ->
+                bosun_actor:touch(Name, Kind, #{project => Project, worktree => Worktree})
+            end),
             {ok, Id}
+    end.
+
+%% @doc 把主体（API key 的主人）绑到会话进程；identify 过的名字保留。
+-spec bind(pid(), bosun_scope:principal()) -> ok.
+bind(Pid, P) ->
+    Id = case lookup(Pid) of
+             {ok, Existing} -> Existing#{user => P};
+             error -> (auto_identity(Pid))#{user => P}
+         end,
+    gen_server:call(?MODULE, {set, Pid, Id}).
+
+%% @doc 当前会话绑定的主体（没有 = 系统作用域，只在纯领域测试里出现）。
+-spec principal() -> bosun_scope:principal() | undefined.
+principal() ->
+    case lookup(self()) of
+        {ok, #{user := U}} -> U;
+        _ -> undefined
     end.
 
 %% @doc 当前会话身份；没有显式身份时生成并记住一个自动名。
@@ -59,12 +83,15 @@ current(Pid) ->
     case lookup(Pid) of
         {ok, Id} -> Id;
         error ->
-            Id = #{name => auto_name(Pid), kind => agent, project => undefined, worktree => undefined,
-                   explicit => false},
+            Id = auto_identity(Pid),
             %% 表可能还没起来（纯领域测试直接调 handler）：那就每次现算，名字仍然稳定
             catch gen_server:call(?MODULE, {set, Pid, Id}),
             Id
     end.
+
+auto_identity(Pid) ->
+    #{name => auto_name(Pid), kind => agent, project => undefined, worktree => undefined,
+      explicit => false, user => undefined}.
 
 -spec lookup(pid()) -> {ok, identity()} | error.
 lookup(Pid) ->
@@ -82,10 +109,16 @@ auto_name(Pid) ->
 
 -spec to_map(identity()) -> map().
 to_map(#{name := N, kind := K, explicit := E} = Id) ->
+    User = case maps:get(user, Id, undefined) of
+               undefined -> undefined;
+               #{user_id := Uid, org_id := Org, name := UName, email := Email} ->
+                   #{<<"id">> => Uid, <<"name">> => UName, <<"email">> => Email, <<"org_id">> => Org}
+           end,
     #{<<"name">> => N, <<"kind">> => atom_to_binary(K, utf8),
       <<"project">> => maps:get(project, Id, undefined),
       <<"worktree">> => maps:get(worktree, Id, undefined),
-      <<"identified">> => E}.
+      <<"identified">> => E,
+      <<"user">> => User}.
 
 %%====================================================================
 

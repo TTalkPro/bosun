@@ -4,6 +4,8 @@
 %%%-------------------------------------------------------------------
 -module(bosun_mcp).
 
+-include_lib("beamai_mcp/include/beamai_mcp.hrl").
+
 -export([tools/0, resources/0, prompts/0, server_info/0, cowboy_config/0]).
 -export([reply/1, error_to_text/1, actor/1, actor_kind/1, obj/1, str/1, arr/1, enum/2, bool/1, int/1, nested/2]).
 
@@ -13,14 +15,25 @@
 
 -spec tools() -> [tuple()].
 tools() ->
-    bosun_mcp_identity_tools:tools()
-    ++ bosun_mcp_project_tools:tools()
-    ++ bosun_mcp_task_tools:tools()
-    ++ bosun_mcp_feedback_tools:tools()
-    ++ bosun_mcp_query_tools:tools().
+    [scoped(T) || T <- bosun_mcp_identity_tools:tools()
+                       ++ bosun_mcp_project_tools:tools()
+                       ++ bosun_mcp_task_tools:tools()
+                       ++ bosun_mcp_feedback_tools:tools()
+                       ++ bosun_mcp_query_tools:tools()].
+
+%% 工具 / 资源 / 提示都在会话进程里执行：调用前把该会话绑定的主体（API key 的主人）设成数据作用域
+scoped(#mcp_tool{handler = Handler} = Tool) ->
+    Tool#mcp_tool{handler = fun(Args) -> bosun_scope:set(bosun_identity:principal()), Handler(Args) end};
+scoped(#mcp_resource{handler = Handler} = Res) ->
+    Res#mcp_resource{handler = fun() -> bosun_scope:set(bosun_identity:principal()), Handler() end};
+scoped(#mcp_prompt{handler = Handler} = Prompt) ->
+    Prompt#mcp_prompt{handler = fun(Args) -> bosun_scope:set(bosun_identity:principal()), Handler(Args) end}.
 
 -spec resources() -> [tuple()].
 resources() ->
+    [scoped(R) || R <- resources0()].
+
+resources0() ->
     [beamai_mcp_types:make_resource(
          <<"bosun://projects">>, <<"projects">>, undefined,
          <<"All active (non-archived) projects as JSON">>, <<"application/json">>,
@@ -39,6 +52,9 @@ resources() ->
 
 -spec prompts() -> [tuple()].
 prompts() ->
+    [scoped(P) || P <- prompts0()].
+
+prompts0() ->
     [beamai_mcp_types:make_prompt(
          <<"work_on_task">>,
          <<"Load a task's full context and the workflow instructions to start working on it">>,
