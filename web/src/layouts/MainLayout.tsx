@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Link as RouterLink, Outlet, useLocation, useParams } from 'react-router';
+import { Link as RouterLink, Outlet, useLocation, useNavigate, useParams } from 'react-router';
 import {
-  AppBar, Box, Collapse, Divider, Drawer, IconButton, List, ListItemButton, ListItemText,
-  ListSubheader, Toolbar, Tooltip, Typography, useColorScheme, useMediaQuery, useTheme,
+  AppBar, Box, Collapse, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText,
+  ListSubheader, Menu, MenuItem, Toolbar, Tooltip, Typography, useColorScheme, useMediaQuery, useTheme,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -12,13 +12,16 @@ import FolderIcon from '@mui/icons-material/FolderOutlined';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import ManageSearchIcon from '@mui/icons-material/ManageSearch';
 import ImportExportIcon from '@mui/icons-material/ImportExport';
+import PersonIcon from '@mui/icons-material/PersonOutline';
+import GroupsIcon from '@mui/icons-material/GroupsOutlined';
+import LogoutIcon from '@mui/icons-material/Logout';
+import { useSnackbar } from 'notistack';
 import { useProjects } from '@/api/projects';
 import { useFilters } from '@/api/query';
+import { logout, useMe } from '@/api/auth';
 import { paths } from '@/routes/paths';
 import GlobalSearch from '@/components/GlobalSearch';
-import IdentityPanel from '@/components/IdentityPanel';
 import { ActorAvatar } from '@/components/ActorChip';
-import { useActor } from '@/api/identity';
 
 const DRAWER_WIDTH = 240;
 
@@ -63,6 +66,7 @@ const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
   const [filtersOpen, toggleFilters] = useCollapsed('filters');
   const { data } = useProjects();
   const { data: filtersData } = useFilters();
+  const isAdmin = useMe().data?.user.role === 'admin';
   const { key } = useParams();
   const { pathname, search } = useLocation();
   const current = key?.toUpperCase();
@@ -116,27 +120,49 @@ const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
         <ListItemButton component={RouterLink} to={paths.projects} selected={pathname === paths.projects} onClick={onNavigate}>
           <ListItemText primary="所有项目" />
         </ListItemButton>
-        <ListItemButton component={RouterLink} to={paths.data} selected={pathname === paths.data} onClick={onNavigate}>
-          <ImportExportIcon fontSize="small" sx={{ mr: 1.5, opacity: 0.7 }} />
-          <ListItemText primary="数据导入导出" />
-        </ListItemButton>
+        {isAdmin && (
+          <ListItemButton component={RouterLink} to={paths.data} selected={pathname === paths.data} onClick={onNavigate}>
+            <ImportExportIcon fontSize="small" sx={{ mr: 1.5, opacity: 0.7 }} />
+            <ListItemText primary="数据导入导出" />
+          </ListItemButton>
+        )}
       </List>
     </Box>
   );
 };
 
-const WhoAmI = () => {
-  const actor = useActor();
-  const [open, setOpen] = useState(false);
+// 顶栏账户菜单：账户（API key / 改密）、组织（admin）、退出登录
+const AccountMenu = () => {
+  const { data: me } = useMe();
+  const navigate = useNavigate();
+  const { enqueueSnackbar } = useSnackbar();
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  if (!me) return null;
+  const close = () => setAnchor(null);
+  const go = (to: string) => { close(); navigate(to); };
+  const doLogout = async () => {
+    close();
+    try { await logout(); } catch { /* 会话可能已经失效，照样回登录页 */ }
+    enqueueSnackbar('已退出登录', { variant: 'info' });
+    navigate(paths.login, { replace: true });
+  };
   return (
     <>
-      <Tooltip title="我是谁（点击修改）">
-        <Box onClick={() => setOpen(true)} sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5, borderRadius: 2, cursor: 'pointer', '&:hover': { bgcolor: 'rgba(255,255,255,0.12)' } }}>
-          <ActorAvatar name={actor} kind="human" size={26} />
-          <Typography variant="body2" sx={{ fontWeight: 600, display: { xs: 'none', sm: 'block' } }}>{actor}</Typography>
+      <Tooltip title={`${me.user.email} · ${me.org.name}`}>
+        <Box onClick={(e) => setAnchor(e.currentTarget)} role="button" aria-label="账户菜单" sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5, borderRadius: 2, cursor: 'pointer', '&:hover': { bgcolor: 'rgba(255,255,255,0.12)' } }}>
+          <ActorAvatar name={me.user.name} kind="human" size={26} />
+          <Box sx={{ display: { xs: 'none', sm: 'block' }, lineHeight: 1.1 }}>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>{me.user.name}</Typography>
+            <Typography variant="caption" sx={{ opacity: 0.8 }}>{me.org.name}</Typography>
+          </Box>
         </Box>
       </Tooltip>
-      {open && <IdentityPanel onClose={() => setOpen(false)} />}
+      <Menu anchorEl={anchor} open={!!anchor} onClose={close}>
+        <MenuItem onClick={() => go(paths.account)}><ListItemIcon><PersonIcon fontSize="small" /></ListItemIcon>账户与 API Key</MenuItem>
+        {me.user.role === 'admin' && <MenuItem onClick={() => go(paths.org)}><ListItemIcon><GroupsIcon fontSize="small" /></ListItemIcon>组织与用户</MenuItem>}
+        <Divider />
+        <MenuItem onClick={doLogout}><ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>退出登录</MenuItem>
+      </Menu>
     </>
   );
 };
@@ -156,7 +182,7 @@ const MainLayout = () => {
           )}
           <Box sx={{ flex: 1 }} />
           <GlobalSearch />
-          <WhoAmI />
+          <AccountMenu />
           <ColorModeToggle />
         </Toolbar>
       </AppBar>

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Alert, Button, Checkbox, FormControlLabel, Stack, TextField, Typography } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import { transitionTask } from '@/api/tasks';
-import { useActor } from '@/api/identity';
+import { useMe } from '@/api/auth';
 import type { Status, Task } from '@/api/types';
 import SidePanel from '@/components/SidePanel';
 import { useApiError } from '@/components/useApiError';
@@ -18,7 +18,7 @@ interface Props {
 // 完成 / 验收：新建工单式面板，记录完成证据（提交 hash、测试结果）。
 // 执行方验收自己的任务时必须有通过的测试（本次或最近一次 DONE）。
 const CompletePanel = ({ task, to, onClose, onChanged }: Props) => {
-  const me = useActor();
+  const me = useMe().data?.user.name;
   const selfVerify = to === 'VERIFIED' && task.assignee === me;
   const lastDone = task.history.find((h) => h.to === 'DONE');
   const lastDonePassed = !!lastDone?.tests?.passed;

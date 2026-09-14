@@ -12,7 +12,7 @@ import MarkdownView from '@/components/markdown/MarkdownView';
 import RelativeTime from '@/components/RelativeTime';
 import SoftChip from '@/components/SoftChip';
 import { ActorAvatar } from '@/components/ActorChip';
-import { useActor } from '@/api/identity';
+import { useMe } from '@/api/auth';
 import { KIND_LABEL } from './kinds';
 
 const ICON: Record<FeedbackKind, ReactElement> = {
@@ -35,7 +35,7 @@ const MONO = '"JetBrains Mono", Menlo, Consolas, monospace';
 
 const Header = ({ f, open, onEdit, dimmed }: { f: Feedback; open: boolean; onEdit?: (f: Feedback) => void; dimmed?: boolean }) => {
   // 只有当前身份写的条目能修订（后端也会按 author 校验）
-  const me = useActor();
+  const me = useMe().data?.user.name;
   return (
   <Stack direction="row" alignItems="center" sx={{ minHeight: 28, opacity: dimmed ? 0.6 : 1 }} useFlexGap flexWrap="wrap" rowGap={0.5}>
     <Stack direction="row" alignItems="center" spacing={1} sx={{ mr: 'auto' }}>
