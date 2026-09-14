@@ -4,8 +4,8 @@
     {registered, [bosun_core_sup, bosun_search]},
     {mod, {bosun_core_app, []}},
     %% mnesia 不在这里：由 bosun_store:init/0 设好目录后再启动（release 里 {mnesia, load}）
-    {applications, [kernel, stdlib, bitcask]},
-    {env, [{data_dir, "data"}]},
+    {applications, [kernel, stdlib, crypto, bitcask, gen_smtp]},
+    {env, [{data_dir, "data"}, {smtp, []}]},
     {modules, []},
     {licenses, ["Apache-2.0"]},
     {links, []}
