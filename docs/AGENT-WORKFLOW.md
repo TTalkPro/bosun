@@ -18,7 +18,9 @@
 
 ## 2. 身份
 
-会话一开始先调用一次：
+先要有一把 API key：在 Bosun 的「账户与 API Key」页给自己建一把，MCP 客户端以 `Authorization: Bearer <key>` 连 `/mcp`（Claude Code 的 `.mcp.json` 写 `"headers": {"Authorization": "Bearer ${BOSUN_API_KEY}"}`）。key 决定你属于哪个组织、能看哪些项目；没有 key 一律 401。
+
+然后会话一开始先调用一次：
 
 ```
 identify(name="keel/feature-search", kind="agent", project="KEEL", worktree="/home/x/keel-search")
@@ -26,7 +28,7 @@ identify(name="keel/feature-search", kind="agent", project="KEEL", worktree="/ho
 
 - `name` 约定 `<项目 key>/<worktree 或用途>`；同一项目不同 worktree 必须用不同的名字。
 - 之后所有写操作（建单、迁移、反馈）都记在这个名字下；不 identify 会得到 `agent-1a2b3c` 这种自动名，可读性差。
-- 人在 Web 界面右上角设置自己的名字，同样存进 actor 表。`list_actors` / `GET /api/v1/actors` 可以看到所有出现过的身份及其 kind。
+- 人在 Web 里的署名就是账号的显示名（管理员分配）。`list_actors` / `GET /api/v1/actors` 可以看到本组织出现过的身份、kind 与所属用户；`whoami` 的 `user` 是这把 key 的主人。
 - 单次调用可以用 `actor` / `author` 参数临时覆盖，正常不需要。
 
 ## 3. 状态与迁移

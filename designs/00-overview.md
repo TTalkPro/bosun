@@ -7,7 +7,7 @@
 
 | 要做 | 不做（本期） |
 |---|---|
-| 多项目管理（创建 / 查询） | 认证、授权、多租户（单人操作，见 §6） |
+| 多项目管理（创建 / 查询） | 项目级权限、SSO（组织 / 用户 / 登录 / API key 见 13） |
 | 项目内任务：带项目前缀的自增 ID、创建 / 查询 / 编辑 | 任务依赖、子任务、看板拖拽、甘特图 |
 | 任务状态机 `NEW → IN_PROGRESS → DONE → VERIFIED`（+ `REJECTED` / `CANCELLED`） | 自定义工作流 |
 | 任务 Feedback（追加 / 修订 / 查看） | 通知、邮件、Webhook |
@@ -30,6 +30,8 @@
 | 09 | [09-bql.md](09-bql.md) | BQL 查询语言与保存的筛选器（后补） | 02、08 |
 | 10 | [10-backup.md](10-backup.md) | 整库导出 / 导入（后补） | 01–04、09 |
 | 11 | [11-identity.md](11-identity.md) | 身份与操作者：会话身份、actor 表（后补） | 05、07 |
+| 12 | [12-link.md](12-link.md) | 任务关联：替代 / 依赖（后补） | 02、03 |
+| 13 | [13-org-auth.md](13-org-auth.md) | 组织注册、用户、登录会话、MCP API key、按组织隔离（后补） | 01–11 |
 
 「MCP 可操作」是横切需求：01–04 各自定义**自己的** MCP 工具（名称、参数 Schema、返回值），05 只负责把它们挂起来并统一约定。
 
@@ -108,10 +110,11 @@ bosun/
 - 领域层输入输出用 **map**（键为 binary），记录只在 `bosun_store` / `bosun_json` / `bosun_backup` 内部与 Mnesia 打交道。
 - 时间统一 `erlang:system_time(millisecond)` 存整数，输出 ISO-8601（UTC）字符串。
 
-## 6. 单人 / 无认证的含义
+## 6. 组织与认证（13 之后）
 
-- 所有接口不鉴权，缺省监听 `127.0.0.1:4000`（`sys.config` / 环境变量 `BOSUN_HTTP_IP` `BOSUN_HTTP_PORT` 可改）。
-- 数据模型里保留 `author` / `actor` 字段，值由调用方自报：前端固定 `"user"`，MCP 工具允许 Agent 传（缺省 `"agent"`，建议用项目 Key）。
+- 任何人可注册组织（邮箱验证码），注册人是管理员，组织内用户由管理员分配。项目归属组织，用户只看本组织。
+- Web 用登录 Cookie；`/mcp` 只认用户自己建的 API key（`Authorization: Bearer`）。中间件 `bosun_web_auth` 把主体放进进程字典（`bosun_scope`），领域层据此过滤；作用域为空（shell / 测试）时不过滤。
+- 署名：REST 一律用登录用户的显示名；MCP 用 `identify` 的名字（记在 key 主人名下）。
 - 没有并发冲突控制（无 ETag / version）。Mnesia 事务保证单条写入原子，「后写覆盖」可接受。
 
 ## 7. 配置
@@ -140,4 +143,4 @@ claude mcp add --transport http bosun http://127.0.0.1:4000/mcp
 ## 10. 后续扩展点
 
 - **AG-UI 聊天面板**：`beamai_agui` 已提供 `/agui/*` 路由与 session；把 `bosun_mcp` 的工具经 `beamai_mcp_adapter` 转成 agent tool 即可。
-- **认证**：在 cowboy 中间件层加 token 校验，领域层不用动。
+- **项目级权限 / SSO**：现在组织内人人可见所有项目；要细分时在 `bosun_scope` 上加项目级判断。

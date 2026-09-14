@@ -51,6 +51,13 @@
 - [x] BOS-12 任务关联：`replaces` / `depends_on`、blocked、BQL（设计 12）
 - [x] BOS-10 `CANCELLED`（已撤销）状态：NEW / IN_PROGRESS 可撤销、可恢复
 
+## 5.11 组织 / 用户 / 认证 / API Key（2026-09-14，BOS-15，分支 feature/org-auth，设计 13）
+- [x] BOS-16 领域层：org · user · session · api_key · email_code 表；`bosun_scope` 作用域；project / filter / actor 带 org；mailer（gen_smtp，未配置走日志）；backup 按组织 (T)
+- [x] BOS-17 REST：`bosun_web_auth` 中间件（Cookie 会话 / Bearer key / admin）；auth · org · users · keys 端点；署名 = 登录用户 (T)
+- [x] BOS-18 MCP：`/mcp` 只认 Bearer key；会话绑定 key 主人；工具 / 资源 / 提示按组织；`whoami` 带 user；`.mcp.json` 带 header (T)
+- [x] BOS-19 前端：登录 / 注册（验证码）/ 账户（API key 只显示一次）/ 组织用户管理；AuthGate；账户菜单 (T)
+- [x] BOS-20 文档：README、designs/00、AGENT-WORKFLOW、sys.config / release.env.example
+
 ## 6. 收尾
 - [x] README、设计文档 00–10
 - [x] `rebar3 check`（xref / dialyzer / eunit / ct）全部通过
