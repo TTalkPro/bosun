@@ -9,7 +9,8 @@
     task_seq    :: non_neg_integer(),
     archived    :: boolean(),
     created_at  :: integer(),
-    updated_at  :: integer()
+    updated_at  :: integer(),
+    org_id      :: binary() | undefined  %% 所属组织（13）；undefined = 升级前的孤儿项目，任何组织都看不到
 }).
 
 -record(task, {
@@ -50,7 +51,8 @@
     name       :: binary(),
     query      :: binary(),        %% BQL
     created_at :: integer(),
-    updated_at :: integer()
+    updated_at :: integer(),
+    org_id     :: binary() | undefined
 }).
 
 %% 全局计数器（filter id 分配）
@@ -76,5 +78,63 @@
     project    :: binary() | undefined,
     worktree   :: binary() | undefined,
     first_seen :: integer(),
-    last_seen  :: integer()
+    last_seen  :: integer(),
+    org_id     :: binary() | undefined,  %% 在哪个组织里出现（13）
+    user_id    :: binary() | undefined   %% 人 = 用户本人；Agent = 它用的 API key 的主人
+}).
+
+%%--------------------------------------------------------------------
+%% 组织 / 用户 / 认证（designs/13-org-auth.md）
+%%--------------------------------------------------------------------
+
+-record(org, {
+    id         :: binary(),          %% <<"o1">>
+    name       :: binary(),
+    created_by :: binary(),          %% 注册管理员的 user id
+    created_at :: integer(),
+    updated_at :: integer()
+}).
+
+-record(user, {
+    id            :: binary(),       %% <<"u1">>
+    org_id        :: binary(),
+    email         :: binary(),       %% 小写，全局唯一
+    name          :: binary(),       %% 显示名 = 写操作的署名；组织内唯一（不分大小写）
+    password      :: term(),         %% bosun_password:hash/1 的结果
+    role          :: admin | member,
+    status        :: active | disabled,
+    created_at    :: integer(),
+    updated_at    :: integer(),
+    last_login_at :: integer() | undefined
+}).
+
+%% 登录会话：主键是 token 的 sha256，明文 token 只在 Cookie 里
+-record(session, {
+    id           :: binary(),
+    user_id      :: binary(),
+    created_at   :: integer(),
+    expires_at   :: integer(),
+    last_seen_at :: integer()
+}).
+
+%% MCP / REST 的 API key：明文只在创建时返回一次；撤销写 revoked_at，不删
+-record(api_key, {
+    id           :: binary(),        %% <<"k1">>
+    user_id      :: binary(),
+    hash         :: binary(),        %% sha256(明文)
+    name         :: binary(),
+    prefix       :: binary(),        %% 展示用 <<"bsk_ab12cd">>
+    created_at   :: integer(),
+    last_used_at :: integer() | undefined,
+    revoked_at   :: integer() | undefined
+}).
+
+%% 注册邮箱验证码：一个邮箱同时只有一条
+-record(email_code, {
+    email      :: binary(),
+    code       :: binary(),          %% 6 位数字
+    purpose    :: register,
+    expires_at :: integer(),
+    attempts   :: non_neg_integer(),
+    sent_at    :: integer()
 }).
