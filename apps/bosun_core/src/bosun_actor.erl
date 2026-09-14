@@ -16,12 +16,17 @@
 -spec touch(term(), kind() | undefined) -> ok.
 touch(Name, Kind) -> touch(Name, Kind, #{}).
 
+%% @doc Extra 可带 project / worktree / org_id / user_id；org_id 与 user_id 缺省取当前作用域
+%% （人 = 用户本人；Agent = 它用的 API key 的主人）。名字是全局主键，组织归属只在**首次出现**
+%% 时写入，之后别的组织再用同名不会改它（同名跨组织时只在先出现的组织里列出）。
 -spec touch(term(), kind() | undefined, map()) -> ok.
 touch(Name0, Kind, Extra) ->
     case bosun_util:trim(Name0) of
         <<>> -> ok;
         Name ->
             Now = bosun_util:now_ms(),
+            OrgId = maps:get(org_id, Extra, bosun_scope:org_id()),
+            UserId = maps:get(user_id, Extra, bosun_scope:user_id()),
             Project = case bosun_util:get_opt_bin(project, Extra) of
                           undefined -> undefined;
                           <<>> -> undefined;
@@ -34,11 +39,14 @@ touch(Name0, Kind, Extra) ->
             Rec = case mnesia:dirty_read(actor, Name) of
                       [] ->
                           #actor{name = Name, kind = default_kind(Name, Kind), project = Project,
-                                 worktree = Worktree, first_seen = Now, last_seen = Now};
+                                 worktree = Worktree, first_seen = Now, last_seen = Now,
+                                 org_id = OrgId, user_id = UserId};
                       [A] ->
                           A#actor{kind = case Kind of undefined -> A#actor.kind; K -> K end,
                                   project = case Project of undefined -> A#actor.project; P2 -> P2 end,
                                   worktree = case Worktree of undefined -> A#actor.worktree; W2 -> W2 end,
+                                  org_id = case A#actor.org_id of undefined -> OrgId; O2 -> O2 end,
+                                  user_id = case A#actor.user_id of undefined -> UserId; U2 -> U2 end,
                                   last_seen = Now}
                   end,
             ok = mnesia:dirty_write(Rec)
@@ -56,10 +64,13 @@ get(Name) ->
         [] -> {error, not_found}
     end.
 
-%% @doc 按最近出现时间倒序。
+%% @doc 当前作用域（组织）里出现过的操作者，按最近出现时间倒序。
 -spec list() -> {ok, [map()]}.
 list() ->
-    All = mnesia:dirty_select(actor, [{'_', [], ['$_']}]),
+    All = case bosun_scope:org_id() of
+              undefined -> mnesia:dirty_select(actor, [{'_', [], ['$_']}]);
+              Org -> mnesia:dirty_index_read(actor, Org, #actor.org_id)
+          end,
     {ok, [to_map(A) || A <- lists:sort(fun(A, B) -> A#actor.last_seen >= B#actor.last_seen end, All)]}.
 
 %% @doc 未登记的名字按缺省规则猜。
@@ -85,6 +96,7 @@ to_map(#actor{} = A) ->
       <<"kind">> => atom_to_binary(A#actor.kind, utf8),
       <<"project">> => A#actor.project,
       <<"worktree">> => A#actor.worktree,
+      <<"user_id">> => A#actor.user_id,
       <<"first_seen">> => bosun_json:iso8601(A#actor.first_seen),
       <<"last_seen">> => bosun_json:iso8601(A#actor.last_seen)}.
 

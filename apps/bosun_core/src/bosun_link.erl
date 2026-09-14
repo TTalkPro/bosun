@@ -127,7 +127,7 @@ satisfied(TaskId) ->
     end.
 
 read_or_abort(Id, Field) ->
-    case mnesia:read(task, Id, read) of
+    case bosun_task:read_in_tx(Id, read) of
         [] -> bosun_store:abort({invalid, Field, <<Id/binary, " not found">>});
         [T] -> [T]
     end.

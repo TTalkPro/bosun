@@ -78,7 +78,7 @@ query(Bin, Opts) ->
     case parse(bosun_util:to_binary(Bin)) of
         {ok, #{where := Where, order := Order}} ->
             Ctx = prepare(Where),
-            All = mnesia:dirty_select(task, [{'_', [], ['$_']}]),
+            All = bosun_task:visible(mnesia:dirty_select(task, [{'_', [], ['$_']}])),
             Matched = [T || T <- All, eval(Where, T, Ctx)],
             Sorted = sort(Matched, Order, Ctx),
             Limit = clamp(to_int(maps:get(<<"limit">>, Opts, 100), 100), 1, 500),

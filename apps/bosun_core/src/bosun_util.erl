@@ -57,7 +57,7 @@ dedupe([H | T], Acc) ->
         false -> dedupe(T, [H | Acc])
     end.
 
--spec to_bool(term(), boolean()) -> boolean().
+-spec to_bool(term(), D) -> boolean() | D.
 to_bool(true, _) -> true;
 to_bool(false, _) -> false;
 to_bool(<<"true">>, _) -> true;

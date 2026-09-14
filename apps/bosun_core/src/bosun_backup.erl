@@ -5,6 +5,11 @@
 %%% 不是给人读的 API JSON。搜索索引不导出——导入后从 Mnesia 重建。
 %%%
 %%% 导入模式：replace（清空后写入）| merge（同 key 覆盖，计数器取大者）。
+%%%
+%%% 作用域（13）：有组织主体时只导出本组织的项目 / 任务 / 反馈 / 关联 / 筛选器 / 操作者，
+%%% 导入把项目 / 筛选器 / 操作者打上本组织（筛选器换新 id 免得撞别的组织），别的组织已占的
+%%% 项目 key 报 {conflict, key}；replace 只清本组织的数据；计数器只在系统作用域下导入。
+%%% 用户 / 会话 / API key 不进导出。
 %%%-------------------------------------------------------------------
 -module(bosun_backup).
 
@@ -21,13 +26,25 @@
 
 -spec export() -> {ok, map()}.
 export() ->
-    Projects = mnesia:dirty_select(project, [{'_', [], ['$_']}]),
-    Tasks = mnesia:dirty_select(task, [{'_', [], ['$_']}]),
-    Fbs = mnesia:dirty_select(feedback, [{'_', [], ['$_']}]),
-    Filters = mnesia:dirty_select(filter, [{'_', [], ['$_']}]),
-    Counters = mnesia:dirty_select(counter, [{'_', [], ['$_']}]),
-    Actors = mnesia:dirty_select(actor, [{'_', [], ['$_']}]),
-    Links = bosun_link:all(),
+    Org = bosun_scope:org_id(),
+    Projects = [P || #project{org_id = O} = P <- mnesia:dirty_select(project, [{'_', [], ['$_']}]),
+                     Org =:= undefined orelse O =:= Org],
+    Keys = maps:from_list([{P#project.key, true} || P <- Projects]),
+    Tasks = [T || T <- mnesia:dirty_select(task, [{'_', [], ['$_']}]),
+                  Org =:= undefined orelse maps:is_key(T#task.project_key, Keys)],
+    Ids = maps:from_list([{T#task.id, true} || T <- Tasks]),
+    Fbs = [F || F <- mnesia:dirty_select(feedback, [{'_', [], ['$_']}]),
+                Org =:= undefined orelse maps:is_key(F#feedback.task_id, Ids)],
+    Filters = [F || #filter{org_id = O} = F <- mnesia:dirty_select(filter, [{'_', [], ['$_']}]),
+                    Org =:= undefined orelse O =:= Org],
+    Counters = case Org of
+                   undefined -> mnesia:dirty_select(counter, [{'_', [], ['$_']}]);
+                   _ -> []
+               end,
+    Actors = [A || #actor{org_id = O} = A <- mnesia:dirty_select(actor, [{'_', [], ['$_']}]),
+                   Org =:= undefined orelse O =:= Org],
+    Links = [L || L <- bosun_link:all(),
+                  Org =:= undefined orelse (maps:is_key(L#link.from, Ids) andalso maps:is_key(L#link.to, Ids))],
     {ok, #{<<"format">> => ?FORMAT,
            <<"version">> => ?VERSION,
            <<"exported_at">> => bosun_json:iso8601(bosun_util:now_ms()),
@@ -101,20 +118,38 @@ filter_out(#filter{} = F) ->
 -spec import(map(), map()) -> {ok, map()} | {error, term()}.
 import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1; V =:= 2 ->
     Mode = maps:get(mode, Opts, merge),
+    Org = bosun_scope:org_id(),
     try
-        Projects = [project_in(P) || P <- maps:get(<<"projects">>, Data, [])],
+        Projects = [(project_in(P))#project{org_id = Org} || P <- maps:get(<<"projects">>, Data, [])],
         Tasks = [task_in(T) || T <- maps:get(<<"tasks">>, Data, [])],
         Fbs = [feedback_in(F) || F <- maps:get(<<"feedback">>, Data, [])],
-        Filters = [filter_in(F) || F <- maps:get(<<"filters">>, Data, [])],
-        Actors = [actor_in(A) || A <- maps:get(<<"actors">>, Data, [])],
+        Filters0 = [(filter_in(F))#filter{org_id = Org} || F <- maps:get(<<"filters">>, Data, [])],
+        Actors = [(actor_in(A))#actor{org_id = Org} || A <- maps:get(<<"actors">>, Data, [])],
         Links = [link_in(L) || L <- maps:get(<<"links">>, Data, [])],
-        Counters = [{binary_to_atom(K, utf8), N} || {K, N} <- maps:to_list(maps:get(<<"counters">>, Data, #{})), is_integer(N)],
+        Counters = case Org of
+                       undefined -> [{binary_to_atom(K, utf8), N} || {K, N} <- maps:to_list(maps:get(<<"counters">>, Data, #{})), is_integer(N)];
+                       _ -> []
+                   end,
         Res = bosun_store:transaction(fun() ->
-            case Mode of
-                replace -> lists:foreach(fun(Tab) -> [mnesia:delete({Tab, K}) || K <- mnesia:all_keys(Tab)] end,
-                                         [project, task, feedback, filter, counter, actor, link]);
-                merge -> ok
+            case {Mode, Org} of
+                {replace, undefined} ->
+                    lists:foreach(fun(Tab) -> [mnesia:delete({Tab, K}) || K <- mnesia:all_keys(Tab)] end,
+                                  [project, task, feedback, filter, counter, actor, link]);
+                {replace, _} -> delete_org_data(Org);
+                {merge, _} -> ok
             end,
+            %% 别的组织已占的 key 不能覆盖
+            lists:foreach(fun(#project{key = K}) ->
+                case mnesia:read(project, K, write) of
+                    [#project{org_id = O}] when Org =/= undefined, O =/= Org -> bosun_store:abort({conflict, key});
+                    _ -> ok
+                end
+            end, Projects),
+            %% 组织作用域下筛选器换新 id（旧 id 可能是别的组织的）
+            Filters = case Org of
+                          undefined -> Filters0;
+                          _ -> [F#filter{id = <<"f", (integer_to_binary(bosun_store:next_id(filter)))/binary>>} || F <- Filters0]
+                      end,
             lists:foreach(fun(R) -> ok = mnesia:write(R) end, Projects ++ Tasks ++ Fbs ++ Filters ++ Actors ++ Links),
             lists:foreach(fun({K, N}) ->
                 Cur = case mnesia:read(counter, K) of [#counter{value = C}] -> C; [] -> 0 end,
@@ -127,7 +162,7 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
                 _ = bosun_search:reindex(),
                 {ok, #{<<"mode">> => atom_to_binary(Mode, utf8),
                        <<"projects">> => length(Projects), <<"tasks">> => length(Tasks),
-                       <<"feedback">> => length(Fbs), <<"filters">> => length(Filters)}};
+                       <<"feedback">> => length(Fbs), <<"filters">> => length(Filters0)}};
             {error, _} = E -> E
         end
     catch
@@ -141,6 +176,22 @@ import(#{<<"version">> := V}, _) ->
     {error, {invalid, data, <<"unsupported export version ", (bosun_util:to_binary(V))/binary>>}};
 import(_, _) ->
     {error, {invalid, data, <<"not a bosun export file">>}}.
+
+%% 事务内：清掉一个组织的项目 / 任务 / 反馈 / 关联 / 筛选器 / 操作者
+delete_org_data(Org) ->
+    Keys = [P#project.key || P <- mnesia:index_read(project, Org, #project.org_id)],
+    lists:foreach(fun(Key) ->
+        lists:foreach(fun(#task{id = Id}) ->
+            lists:foreach(fun(F) -> mnesia:delete_object(F) end, mnesia:index_read(feedback, Id, #feedback.task_id)),
+            lists:foreach(fun(L) -> mnesia:delete_object(L) end,
+                          mnesia:index_read(link, Id, #link.from) ++ mnesia:index_read(link, Id, #link.to)),
+            mnesia:delete({task, Id})
+        end, mnesia:index_read(task, Key, #task.project_key)),
+        mnesia:delete({project, Key})
+    end, Keys),
+    lists:foreach(fun(F) -> mnesia:delete_object(F) end, mnesia:index_read(filter, Org, #filter.org_id)),
+    lists:foreach(fun(A) -> mnesia:delete_object(A) end, mnesia:index_read(actor, Org, #actor.org_id)),
+    ok.
 
 -spec import_file(file:name_all(), map()) -> {ok, map()} | {error, term()}.
 import_file(Path, Opts) ->

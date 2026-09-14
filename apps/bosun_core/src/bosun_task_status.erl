@@ -98,7 +98,7 @@ transition(TaskId0, To0, Opts) ->
                 {_, {error, _} = E} -> E;
                 {{ok, Commits}, {ok, Tests}} ->
                     case bosun_store:transaction(fun() ->
-                        case mnesia:read(task, TaskId, write) of
+                        case bosun_task:read_in_tx(TaskId, write) of
                             [] -> bosun_store:abort(not_found);
                             [#task{status = From} = T] ->
                                 case allowed(From, To) of

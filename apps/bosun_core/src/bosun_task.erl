@@ -7,7 +7,7 @@
 
 -export([create/2, get/1, list/2, update/2, find_by_ids/1, search/2]).
 -export([kind_of/1, children/1, progress/1, parse_kind/1]).
--export([indexed/1]).
+-export([indexed/1, read_in_tx/2, read_dirty/1, visible/1]).
 
 -define(DEFAULT_LIMIT, 100).
 -define(MAX_LIMIT, 500).
@@ -24,6 +24,7 @@ create(Key0, Input) when is_map(Input) ->
                 {ok, Title, Desc, Priority, Labels, Actor, Kind} ->
                     ok = bosun_actor:touch(Actor, bosun_actor:parse_kind(maps:get(<<"actor_kind">>, Input, undefined))),
                     Res = bosun_store:transaction(fun() ->
+                        bosun_scope:project_visible(Key) orelse bosun_store:abort(not_found),
                         Epic = epic_in_tx(Kind, maps:get(<<"epic">>, Input, undefined)),
                         Seq = bosun_project:next_task_seq_in_tx(Key),
                         Now = bosun_util:now_ms(),
@@ -57,7 +58,7 @@ create(Key0, Input) when is_map(Input) ->
 get(TaskId0) ->
     case bosun_id:parse_task_id(TaskId0) of
         {ok, TaskId, _, _} ->
-            case mnesia:dirty_read(task, TaskId) of
+            case read_dirty(TaskId) of
                 [T] -> {ok, bosun_json:task_full(T, bosun_feedback:read_dirty(TaskId))};
                 [] -> {error, not_found}
             end;
@@ -72,9 +73,9 @@ list(Key0, Filter) when is_map(Filter) ->
     case bosun_id:validate_key(Key0) of
         {error, _} -> {error, {project, not_found}};
         {ok, Key} ->
-            case mnesia:dirty_read(project, Key) of
-                [] -> {error, {project, not_found}};
-                [_] ->
+            case bosun_scope:project_visible(Key) of
+                false -> {error, {project, not_found}};
+                true ->
                     case parse_filter(Filter) of
                         {ok, F} ->
                             All = mnesia:dirty_index_read(task, Key, #task.project_key),
@@ -98,7 +99,7 @@ update(TaskId0, Input) when is_map(Input) ->
     case bosun_id:parse_task_id(TaskId0) of
         {ok, TaskId, _, _} ->
             indexed(bosun_store:transaction(fun() ->
-                case mnesia:read(task, TaskId, write) of
+                case read_in_tx(TaskId, write) of
                     [] -> bosun_store:abort(not_found);
                     [T0] ->
                         T1 = apply_updates(T0, Input),
@@ -135,7 +136,7 @@ group_hits([#{task_id := TaskId} = H | Rest], Acc, Seen) ->
     case maps:is_key(TaskId, Seen) of
         true -> group_hits(Rest, Acc, Seen);
         false ->
-            case mnesia:dirty_read(task, TaskId) of
+            case read_dirty(TaskId) of
                 [] -> group_hits(Rest, Acc, Seen);
                 [T] ->
                     Fbs = bosun_feedback:read_dirty(TaskId),
@@ -160,6 +161,21 @@ snippet(#{<<"content">> := C} = F) ->
                 false -> C
             end,
     (maps:with([<<"id">>, <<"author">>, <<"kind">>, <<"created_at">>], F))#{<<"snippet">> => Short}.
+
+%% @doc 事务内读任务；不在当前作用域（别的组织）里的按不存在处理，返回 []。
+-spec read_in_tx(binary(), read | write) -> [#task{}].
+read_in_tx(TaskId, Lock) -> visible(mnesia:read(task, TaskId, Lock)).
+
+-spec read_dirty(binary()) -> [#task{}].
+read_dirty(TaskId) -> visible(mnesia:dirty_read(task, TaskId)).
+
+%% @doc 过滤到当前作用域可见的任务（项目属于当前组织）。
+-spec visible([#task{}]) -> [#task{}].
+visible(Tasks) ->
+    case bosun_scope:org_id() of
+        undefined -> Tasks;
+        _ -> [T || T <- Tasks, bosun_scope:project_visible(T#task.project_key)]
+    end.
 
 %% @doc 写操作成功后把任务送进索引（异步）。
 -spec indexed({ok, map()} | {error, term()}) -> {ok, map()} | {error, term()}.
@@ -187,7 +203,7 @@ parse_kind(_) -> {error, {invalid, kind, <<"expected task or epic">>}}.
 %% @doc Epic 的子任务记录，按 id 序（项目 key、seq）。
 -spec children(binary()) -> [#task{}].
 children(EpicId) ->
-    Kids = mnesia:dirty_index_read(task, EpicId, #task.epic),
+    Kids = visible(mnesia:dirty_index_read(task, EpicId, #task.epic)),
     lists:sort(fun(A, B) -> {A#task.project_key, A#task.seq} =< {B#task.project_key, B#task.seq} end, Kids).
 
 %% @doc Epic 进度：子任务按状态计数；done = 已完成数（DONE 或 VERIFIED）。
@@ -207,7 +223,7 @@ find_by_ids(Ids) ->
     Found = lists:filtermap(fun(Id0) ->
         case bosun_id:parse_task_id(Id0) of
             {ok, Id, _, _} ->
-                case mnesia:dirty_read(task, Id) of
+                case read_dirty(Id) of
                     [T] -> {true, bosun_json:task_summary(T, bosun_feedback:read_dirty(Id))};
                     [] -> false
                 end;
@@ -253,7 +269,7 @@ epic_in_tx(Kind, V) when is_binary(V) ->
         Raw ->
             case bosun_id:parse_task_id(Raw) of
                 {ok, EpicId, _, _} ->
-                    case mnesia:read(task, EpicId, read) of
+                    case read_in_tx(EpicId, read) of
                         [#task{kind = epic}] -> EpicId;
                         [_] -> bosun_store:abort({invalid, epic, <<EpicId/binary, " is not an epic">>});
                         [] -> bosun_store:abort({invalid, epic, <<EpicId/binary, " not found">>})

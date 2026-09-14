@@ -19,7 +19,8 @@ create(Input) when is_map(Input) ->
             Now = bosun_util:now_ms(),
             Rec = #project{key = Key, name = Name, description = Desc,
                            task_seq = 0, archived = false,
-                           created_at = Now, updated_at = Now},
+                           created_at = Now, updated_at = Now,
+                           org_id = bosun_scope:org_id()},
             bosun_store:transaction(fun() ->
                 case mnesia:read(project, Key, write) of
                     [] -> ok = mnesia:write(Rec), bosun_json:project_to_map(Rec);
@@ -33,18 +34,21 @@ create(Input) when is_map(Input) ->
 get(Key0) ->
     case bosun_id:validate_key(Key0) of
         {ok, Key} ->
-            case mnesia:dirty_read(project, Key) of
+            case read_dirty(Key) of
                 [P] -> {ok, bosun_json:project_to_map(P)};
                 [] -> {error, not_found}
             end;
         {error, _} -> {error, not_found}
     end.
 
-%% @doc 列表，按 created_at 升序。Opts: #{include_archived => boolean()}
+%% @doc 当前作用域可见的项目列表，按 created_at 升序。Opts: #{include_archived => boolean()}
 -spec list(map()) -> {ok, [map()]}.
 list(Opts) ->
     IncludeArchived = maps:get(include_archived, Opts, false),
-    All = mnesia:dirty_select(project, [{'_', [], ['$_']}]),
+    All = case bosun_scope:org_id() of
+              undefined -> mnesia:dirty_select(project, [{'_', [], ['$_']}]);
+              Org -> mnesia:dirty_index_read(project, Org, #project.org_id)
+          end,
     Filtered = [P || P <- All, IncludeArchived orelse not P#project.archived],
     Sorted = lists:sort(fun(A, B) -> A#project.created_at =< B#project.created_at end, Filtered),
     {ok, [bosun_json:project_to_map(P) || P <- Sorted]}.
@@ -55,7 +59,7 @@ update(Key0, Input) when is_map(Input) ->
     case bosun_id:validate_key(Key0) of
         {ok, Key} ->
             bosun_store:transaction(fun() ->
-                case mnesia:read(project, Key, write) of
+                case visible(mnesia:read(project, Key, write)) of
                     [] -> bosun_store:abort(not_found);
                     [P0] ->
                         P1 = apply_updates(P0, Input),
@@ -90,6 +94,16 @@ next_task_seq_in_tx(Key) ->
 %%====================================================================
 %% 内部
 %%====================================================================
+
+%% 别的组织的项目按不存在处理
+read_dirty(Key) -> visible(mnesia:dirty_read(project, Key)).
+
+visible([#project{org_id = Org} = P]) ->
+    case bosun_scope:filter_org(Org) of
+        true -> [P];
+        false -> []
+    end;
+visible([]) -> [].
 
 validate_new(Input) ->
     case bosun_id:validate_key(maps:get(<<"key">>, Input, <<>>)) of

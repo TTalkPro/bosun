@@ -14,7 +14,8 @@ create(Input) when is_map(Input) ->
         {ok, Name, Query} ->
             Now = bosun_util:now_ms(),
             Id = <<"f", (integer_to_binary(bosun_store:next_id(filter)))/binary>>,
-            F = #filter{id = Id, name = Name, query = Query, created_at = Now, updated_at = Now},
+            F = #filter{id = Id, name = Name, query = Query, created_at = Now, updated_at = Now,
+                        org_id = bosun_scope:org_id()},
             bosun_store:transaction(fun() -> ok = mnesia:write(F), to_map(F) end);
         {error, _} = E -> E
     end.
@@ -22,21 +23,25 @@ create(Input) when is_map(Input) ->
 -spec get(term()) -> {ok, map()} | {error, not_found}.
 get(Id0) ->
     Id = bosun_util:trim(Id0),
-    case mnesia:dirty_read(filter, Id) of
+    case visible(mnesia:dirty_read(filter, Id)) of
         [F] -> {ok, to_map(F)};
         [] -> {error, not_found}
     end.
 
+%% @doc 当前作用域的筛选器，按创建时间。
 -spec list() -> {ok, [map()]}.
 list() ->
-    All = mnesia:dirty_select(filter, [{'_', [], ['$_']}]),
+    All = case bosun_scope:org_id() of
+              undefined -> mnesia:dirty_select(filter, [{'_', [], ['$_']}]);
+              Org -> mnesia:dirty_index_read(filter, Org, #filter.org_id)
+          end,
     {ok, [to_map(F) || F <- lists:sort(fun(A, B) -> A#filter.created_at =< B#filter.created_at end, All)]}.
 
 -spec update(term(), map()) -> {ok, map()} | {error, term()}.
 update(Id0, Input) when is_map(Input) ->
     Id = bosun_util:trim(Id0),
     bosun_store:transaction(fun() ->
-        case mnesia:read(filter, Id, write) of
+        case visible(mnesia:read(filter, Id, write)) of
             [] -> bosun_store:abort(not_found);
             [F0] ->
                 case validate(Input, #{name => F0#filter.name, query => F0#filter.query}) of
@@ -53,7 +58,7 @@ update(Id0, Input) when is_map(Input) ->
 delete(Id0) ->
     Id = bosun_util:trim(Id0),
     case bosun_store:transaction(fun() ->
-             case mnesia:read(filter, Id, write) of
+             case visible(mnesia:read(filter, Id, write)) of
                  [] -> bosun_store:abort(not_found);
                  [_] -> mnesia:delete({filter, Id})
              end
@@ -75,6 +80,13 @@ run(Id, Opts) ->
     end.
 
 %%====================================================================
+
+visible([#filter{org_id = Org} = F]) ->
+    case bosun_scope:filter_org(Org) of
+        true -> [F];
+        false -> []
+    end;
+visible([]) -> [].
 
 validate(Input, Defaults) ->
     Name = case bosun_util:get_opt_bin(<<"name">>, Input) of
