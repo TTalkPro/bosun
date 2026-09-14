@@ -1,6 +1,5 @@
 import useSWR, { mutate } from 'swr';
 import { client, fetcher } from './client';
-import { actorFields } from './identity';
 import type { LinkType, Priority, Status, Task, TaskFilter, TaskKind, TaskListResponse, TestEvidence } from './types';
 
 const taskKey = (id: string) => `/tasks/${id.toUpperCase()}`;
@@ -60,7 +59,7 @@ export interface TransitionEvidence {
 }
 
 export const createTask = async (projectKey: string, input: TaskInput) => {
-  const { data } = await client.post<Task>(listPrefix(projectKey), { ...input, ...actorFields() });
+  const { data } = await client.post<Task>(listPrefix(projectKey), input);
   return applyTask(data);
 };
 
@@ -70,13 +69,13 @@ export const updateTask = async (id: string, input: Partial<TaskInput>) => {
 };
 
 export const transitionTask = async (id: string, to: Status, evidence: TransitionEvidence = {}) => {
-  const { data } = await client.post<Task>(`${taskKey(id)}/transition`, { to, ...evidence, ...actorFields() });
+  const { data } = await client.post<Task>(`${taskKey(id)}/transition`, { to, ...evidence });
   return applyTask(data);
 };
 
 // 关联：from replaces / depends_on to；返回 from 的详情。对端也会变（blocked / 被撤销），一并失效
 export const addLink = async (from: string, to: string, type: LinkType) => {
-  const { data } = await client.post<Task>(`${taskKey(from)}/links`, { to, type, ...actorFields() });
+  const { data } = await client.post<Task>(`${taskKey(from)}/links`, { to, type });
   await mutate(taskKey(to));
   return applyTask(data);
 };
