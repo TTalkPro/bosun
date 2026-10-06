@@ -5,16 +5,16 @@
 %%% 启动时目录为空就从 Mnesia 全量重建，`reindex/0' 随时可以重来。
 %%%
 %%% 文档：
-%%%   task:<ID>   text = title + description + labels   fields title / labels   meta {project, kind=task, status}
-%%%   fb:<ID>     text = content                        meta {project, kind=feedback, task}
+%%%   task:<ID>   text = title + description + labels   fields title / labels   meta {v, org, project, kind=task, status}
+%%%   fb:<ID>     text = content                        meta {v, org, project, kind=feedback, task}
+%%%
+%%% `org' 取自项目的 org_id（孤儿项目为 null）；项目改组织（`bosun_org:adopt_orphans/1'）后要 reindex。
+%%% `v' 是索引格式版本（?SCHEMA）：启动时抽一篇文档看版本，不对就全量重建。
 %%%
 %%% jieba 对拉丁词大小写敏感，入库与查询统一小写。
 %%%
-%%% 过滤（项目 / 类型）按 key 前缀在 Erlang 侧做——key 本身就编码了类型与项目
-%%% （`task:BOS-1` / `fb:BOS-1#1`）。原因：加权检索走 `search_fields/3`，它没有
-%%% meta filter 参数（只有 `search_text/4` 有）；单人规模 K 放大一点就够。
-%%% meta 仍随文档写入（bitcask 6.4.1 起重开后 meta 也能正确恢复），以后要换成
-%%% 引擎侧过滤随时可以。
+%%% 过滤（组织 / 项目 / 类型）按 meta 下推给引擎：`search_fields/4`、`search_wildcard/4`
+%%% 带 meta filter（bitcask 6.7.1 起），引擎会补取到 K 条，不再需要 Erlang 侧放大 K 再裁。
 %%%-------------------------------------------------------------------
 -module(bosun_search).
 -behaviour(gen_server).
@@ -26,6 +26,9 @@
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
 -record(st, {dir :: string(), h :: term()}).
+
+%% 索引格式版本；meta 结构变了就加一，旧索引启动时自动重建
+-define(SCHEMA, 2).
 
 -type hit() :: #{type := task | feedback, id := binary(), task_id := binary(), score := float()}.
 -export_type([hit/0]).
@@ -44,13 +47,15 @@ start_link() ->
 start_link(Dir) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Dir, []).
 
-%% @doc BM25 检索。Opts: #{project => binary(), kinds => [task | feedback], limit => pos_integer()}
+%% @doc BM25 检索。Opts: #{org => binary() | undefined, project => binary(),
+%% kinds => [task | feedback], limit => pos_integer()}
+%% `org' 缺省取调用进程的当前组织（bosun_scope），系统作用域下不按组织过滤。
 %% 返回按分数降序的命中；feedback 命中带所属 task_id，调用方决定怎么聚合。
 -spec search(binary(), map()) -> {ok, [hit()]} | {error, term()}.
 search(Query0, Opts) ->
     case normalize(Query0) of
         <<>> -> {ok, []};
-        Query -> call({search, Query, Opts})
+        Query -> call({search, Query, maps:merge(#{org => bosun_scope:org_id()}, Opts)})
     end.
 
 %% @doc 任务 map（bosun_json:task_full/summary 的输出）入索引；异步，索引失败只记日志。
@@ -94,7 +99,7 @@ init(Dir) ->
     case open(Dir) of
         {ok, H} ->
             St = #st{dir = Dir, h = H},
-            case bitcask:is_empty_estimate(H) of
+            case bitcask:is_empty_estimate(H) orelse stale(H) of
                 true ->
                     {ok, N} = do_reindex(St),
                     logger:notice("bosun_search: built index from mnesia (~b docs)", [N]);
@@ -146,6 +151,18 @@ open(Dir) ->
         H -> {ok, H}
     end.
 
+%% 抽一篇文档看 meta 里的格式版本
+stale(H) ->
+    case keys(H) of
+        [] -> false;
+        [K | _] ->
+            case bitcask:get(H, K) of
+                {ok, #{meta := Meta}} when is_binary(Meta), Meta =/= <<>> ->
+                    maps:get(<<"v">>, bitcask:decode_meta(Meta), undefined) =/= ?SCHEMA;
+                _ -> true
+            end
+    end.
+
 keys(H) ->
     case bitcask:list_keys(H) of
         L when is_list(L) -> L;
@@ -168,37 +185,47 @@ do_search(H, Query, Opts) ->
                   undefined -> undefined;
                   P -> bosun_id:normalize_key(P)
               end,
-    %% 过滤在结果集上做，所以多取一些：单人规模文档总量小，K 直接放大
-    K = max(Limit * 10, 200),
+    Filter = filter(maps:get(org, Opts, undefined), Project, Kinds),
+    %% search_fields 多个 boost 组时是逐字段取 top-K 再求和的近似，留点余量
+    K = max(Limit * 2, 50),
     %% 空白分隔的多个词按 AND 处理（各词分别检索后按 key 求交，分数相加）；
-    %% 单个词（含不带空格的中文串）交给 jieba 自己切
+    %% 单个词（含不带空格的中文串）交给 jieba 自己切。求交要各词的命中有交集，K 再放大
     Words = [W || W <- binary:split(Query, [<<" ">>, <<"\t">>, <<"\n">>], [global]), W =/= <<>>],
     Res = case Words of
-              [_] -> search_word(H, Query, K);
-              _ -> intersect([search_word(H, W, K * 2) || W <- Words])
+              [_] -> search_word(H, Query, K, Filter);
+              _ -> intersect([search_word(H, W, K * 8, Filter) || W <- Words])
           end,
     case Res of
-        {ok, Hits} ->
-            Kept = [Hit || Hit <- Hits, key_matches(Hit, Project, Kinds)],
-            {ok, lists:sublist([to_hit(Hit) || Hit <- Kept], Limit)};
+        {ok, Hits} -> {ok, lists:sublist([to_hit(Hit) || Hit <- Hits], Limit)};
         {error, _} = E -> E
+    end.
+
+%% meta filter：org eq、project eq、kind in；都不限时传 undefined
+filter(Org, Project, Kinds) ->
+    Conds = [#{key => <<"org">>, op => eq, value => Org} || Org =/= undefined]
+        ++ [#{key => <<"project">>, op => eq, value => Project} || Project =/= undefined]
+        ++ [#{key => <<"kind">>, op => in, values => [atom_to_binary(Kd) || Kd <- Kinds]}
+            || lists:usort(Kinds) =/= [feedback, task]],
+    case Conds of
+        [] -> undefined;
+        _ -> Conds
     end.
 
 %% 一个词同时打默认字段与 title / labels 字段：标签命中权重 ×8、标题 ×3，
 %% 正文 / feedback 只在默认字段里 ×1（bitcask `field:term^boost` 语法，各子句分数相加）。
-search_word(H, Word0, K) ->
+search_word(H, Word0, K, Filter) ->
     Word = binary:replace(Word0, [<<":">>, <<"^">>], <<>>, [global]),
     Expr = <<Word/binary, " title:", Word/binary, "^3 labels:", Word/binary, "^8">>,
-    case Word =:= <<>> orelse bitcask:search_fields(H, Expr, K) of
+    case Word =:= <<>> orelse bitcask:search_fields(H, Expr, K, Filter) of
         true -> {ok, []};
-        {ok, []} -> prefix_fallback(H, Word, K);
+        {ok, []} -> prefix_fallback(H, Word, K, Filter);
         Other -> Other
     end.
 
 %% 单个拉丁词没命中时按前缀再试一次（"crea" → create）
-prefix_fallback(H, Word, K) ->
+prefix_fallback(H, Word, K, Filter) ->
     case re:run(Word, "^[a-z0-9_]+$", [{capture, none}]) of
-        match -> bitcask:search_wildcard(H, <<Word/binary, "*">>, K);
+        match -> bitcask:search_wildcard(H, <<Word/binary, "*">>, K, Filter);
         nomatch -> {ok, []}
     end.
 
@@ -213,11 +240,6 @@ intersect(Results) ->
                       || {Key, {Ord, _}} <- maps:to_list(Common)],
             {ok, lists:sort(fun({_, _, A}, {_, _, B}) -> A >= B end, Summed)}
     end.
-
-key_matches({Key, _, _}, Project, Kinds) ->
-    {Type, Id} = id_of(Key),
-    lists:member(Type, Kinds)
-    andalso (Project =:= undefined orelse project_of(Id) =:= Project).
 
 to_hit({Key, _Ord, Score}) ->
     {Type, Id} = id_of(Key),
@@ -236,7 +258,8 @@ task_doc(#{<<"id">> := Id, <<"project_key">> := Project, <<"title">> := Title} =
     Desc = maps:get(<<"description">>, T, <<>>),
     Labels = iolist_to_binary(lists:join(<<" ">>, maps:get(<<"labels">>, T, []))),
     Text = normalize(<<Title/binary, "\n", Desc/binary, "\n", Labels/binary>>),
-    Meta = bitcask:encode_meta(#{<<"project">> => Project, <<"kind">> => <<"task">>,
+    Meta = bitcask:encode_meta(#{<<"v">> => ?SCHEMA, <<"org">> => org_of(Project),
+                                 <<"project">> => Project, <<"kind">> => <<"task">>,
                                  <<"status">> => maps:get(<<"status">>, T, <<>>)}),
     {<<"task:", Id/binary>>,
      #{text => Text,
@@ -244,9 +267,18 @@ task_doc(#{<<"id">> := Id, <<"project_key">> := Project, <<"title">> := Title} =
        meta => Meta}}.
 
 feedback_doc(#{<<"id">> := Id, <<"task_id">> := TaskId, <<"content">> := Content}) ->
-    Meta = bitcask:encode_meta(#{<<"project">> => project_of(TaskId), <<"kind">> => <<"feedback">>,
+    Project = project_of(TaskId),
+    Meta = bitcask:encode_meta(#{<<"v">> => ?SCHEMA, <<"org">> => org_of(Project),
+                                 <<"project">> => Project, <<"kind">> => <<"feedback">>,
                                  <<"task">> => TaskId}),
     {<<"fb:", Id/binary>>, #{text => normalize(Content), meta => Meta}}.
+
+%% 项目所属组织；孤儿项目 / 项目不存在 → undefined（meta 里是 null，任何组织都过滤不到）
+org_of(Project) ->
+    case mnesia:dirty_read(project, Project) of
+        [#project{org_id = Org}] -> Org;
+        [] -> undefined
+    end.
 
 normalize(Bin) when is_binary(Bin) ->
     string:lowercase(string:trim(Bin));

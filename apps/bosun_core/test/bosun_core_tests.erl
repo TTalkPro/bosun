@@ -21,6 +21,8 @@ core_test_() ->
         {"archived project rejects tasks", fun archived_project_rejects_tasks/0},
         {"concurrent task creation", fun concurrent_task_creation/0},
         {"full-text search", fun full_text_search/0},
+        {"search filter pushdown", fun search_filter_pushdown/0},
+        {"stale search index rebuilt", fun stale_search_index/0},
         {"actor registry", fun actor_registry/0},
         {"workflow doc", fun workflow_doc/0},
         {"roles, commits, tests & self-verify", fun roles_and_evidence/0},
@@ -345,6 +347,40 @@ full_text_search() ->
     {ok, N} = bosun_search:reindex(),
     ?assertEqual(6, N),
     {ok, #{<<"hits">> := [_]}} = bosun_task:search(<<"manual">>, #{}).
+
+%% 项目 / 类型过滤下推到引擎：别的项目里分数更高的命中再多，也不会把本项目的挤掉
+search_filter_pushdown() ->
+    [bosun_search:index_task(#{<<"id">> => <<"BIG-", (integer_to_binary(I))/binary>>,
+                               <<"project_key">> => <<"BIG">>, <<"title">> => <<"deploy">>})
+     || I <- lists:seq(1, 300)],
+    Filler = iolist_to_binary(lists:duplicate(40, <<"lorem ipsum ">>)),
+    bosun_search:index_task(#{<<"id">> => <<"TINY-1">>, <<"project_key">> => <<"TINY">>,
+                              <<"title">> => <<"notes">>, <<"description">> => <<"deploy ", Filler/binary>>}),
+    bosun_search:index_feedback(#{<<"id">> => <<"BIG-1#1">>, <<"task_id">> => <<"BIG-1">>,
+                                  <<"content">> => <<"deploy ", Filler/binary>>}),
+    ok = bosun_search:sync(),
+    {ok, [#{id := <<"TINY-1">>}]} = bosun_search:search(<<"deploy">>, #{project => <<"tiny">>, limit => 1}),
+    {ok, [#{type := feedback, id := <<"BIG-1#1">>}]} =
+        bosun_search:search(<<"deploy">>, #{kinds => [feedback], limit => 5}),
+    {ok, Hits} = bosun_search:search(<<"deploy">>, #{project => <<"BIG">>, kinds => [task], limit => 500}),
+    ?assertEqual(300, length(Hits)).
+
+%% 旧格式（meta 没有版本号）的索引目录，启动时整个从 Mnesia 重建
+stale_search_index() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"STL">>, <<"name">> => <<"s">>}),
+    {ok, _} = bosun_task:create(<<"STL">>, #{<<"title">> => <<"fresh entry">>}),
+    Dir = filename:join(["/tmp", "bosun_test_stale_" ++ integer_to_list(erlang:system_time(millisecond))]),
+    ok = filelib:ensure_path(Dir),
+    H = bitcask:open(Dir, [read_write, {analyzer, jieba}, {enable_stop_words, true}]),
+    ok = bitcask:put(H, <<"task:GONE-1">>, #{text => <<"ghost entry">>,
+                                            meta => bitcask:encode_meta(#{<<"project">> => <<"GONE">>})}),
+    ok = bitcask:close(H),
+    ok = gen_server:stop(bosun_search),
+    {ok, Pid} = bosun_search:start_link(Dir),
+    unlink(Pid),
+    ?assertMatch(#{docs := 1}, bosun_search:status()),
+    {ok, []} = bosun_search:search(<<"ghost">>, #{}),
+    {ok, [#{id := <<"STL-1">>}]} = bosun_search:search(<<"fresh">>, #{}).
 
 workflow_doc() ->
     {ok, Zh} = bosun_workflow:doc(),
