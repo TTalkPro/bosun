@@ -59,7 +59,7 @@ actor      + org_id · user_id   （人 = 用户本人；Agent = 用的哪把 ke
 
 - `bosun_project:create` 把 `org_id` 写成当前组织；`list` 只出当前组织；`get / update` 组织不符 → `not_found`（不泄露存在性）。
 - 任务、状态迁移、关联、反馈：先取项目，项目不可见即 `not_found`。`bosun_scope:project_visible(Key)` 一处判断。
-- `bosun_bql:query` / `bosun_task:search` / `find_by_ids`：结果过滤到可见项目。
+- `bosun_bql:query` / `bosun_task:search` / `find_by_ids`：结果过滤到可见项目。全文检索另在引擎侧按 meta `org` 过滤（见 08 §3）。
 - `bosun_filter`：带 `org_id`，list / get 按组织。
 - `bosun_actor:list`：按组织。`touch` 顺手记 `org_id` / `user_id`——但名字是全局主键，归属只在**首次出现**时写入，之后别的组织用同名不会改它（同名跨组织只在先出现的组织里列出）。
 - 任务的读取统一走 `bosun_task:read_in_tx/2` / `read_dirty/1` / `visible/1`，状态迁移 / 关联 / 反馈都用它们。

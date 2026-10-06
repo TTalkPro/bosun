@@ -15,7 +15,7 @@
 - [x] `bosun_task`（02）：`KEY-N` 事务内分配、列表 `q` 走索引、`search/2` 按任务聚合 (T)
 - [x] `bosun_task_status`（03）：含 `REJECTED`、`CANCELLED`（BOS-10） (T)
 - [x] `bosun_feedback`（04）：不可变，`revise/2` 新条 + 旧条作废 (T)
-- [x] `bosun_search`（08）：bitcask jieba BM25，fields 加权，key 前缀过滤，写后异步索引，启动重建 (T)
+- [x] `bosun_search`（08）：bitcask jieba BM25，fields 加权，组织 / 项目 / 类型过滤按 meta 下推引擎（bitcask 6.7.1），索引格式带版本、不符自动重建，写后异步索引，启动重建 (T)
 - [x] `bosun_bql` + `bosun_filter`（09） (T)
 - [x] `bosun_backup`（10） (T)
 
