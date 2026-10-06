@@ -183,6 +183,9 @@ org_isolation() ->
         ?assertEqual({error, not_found}, bosun_feedback:get(<<"ACM-1#1">>)),
         ?assertEqual({error, not_found}, bosun_feedback:revise(<<"ACM-1#1">>, #{<<"content">> => <<"x">>, <<"actor">> => <<"Alice">>})),
         {ok, #{<<"hits">> := []}} = bosun_task:search(<<"secret">>, #{}),
+        %% 引擎侧就按组织过滤掉了，不靠事后的可见性检查
+        {ok, []} = bosun_search:search(<<"secret">>, #{}),
+        {ok, []} = bosun_search:search(<<"note">>, #{}),
         {ok, #{<<"tasks">> := [], <<"total">> := 0}} = bosun_bql:query(<<"project = ACM">>, #{}),
         {ok, []} = bosun_task:find_by_ids([<<"ACM-1">>]),
         {ok, []} = bosun_filter:list(),
@@ -201,6 +204,8 @@ org_isolation() ->
         {ok, [#{<<"key">> := <<"ACM">>}]} = bosun_project:list(#{}),
         {ok, #{<<"id">> := <<"ACM-1">>}} = bosun_task:get(<<"ACM-1">>),
         {ok, #{<<"hits">> := [#{<<"task">> := #{<<"id">> := <<"ACM-1">>}}]}} = bosun_task:search(<<"secret">>, #{}),
+        {ok, [#{type := feedback, id := <<"ACM-1#1">>}]} = bosun_search:search(<<"note">>, #{}),
+        {ok, []} = bosun_search:search(<<"b1">>, #{}),
         {ok, #{<<"total">> := 1}} = bosun_bql:query(<<"project = ACM">>, #{}),
         {ok, [#{<<"name">> := <<"mine">>}]} = bosun_filter:list(),
         ?assertEqual({error, not_found}, bosun_task:get(<<"BET-1">>)),
@@ -209,6 +214,8 @@ org_isolation() ->
     ?assertEqual(<<"ACM-1">>, maps:get(<<"id">>, TaskA)),
     %% 系统作用域看全部
     {ok, [_, _]} = bosun_project:list(#{}),
+    {ok, [#{id := <<"ACM-1">>}]} = bosun_search:search(<<"secret">>, #{}),
+    {ok, [#{id := <<"BET-1">>}]} = bosun_search:search(<<"b1">>, #{}),
     {ok, #{<<"total">> := 2}} = bosun_bql:query(<<>>, #{}).
 
 backup_scoped() ->
@@ -256,13 +263,18 @@ adopt_orphans() ->
     %% 系统作用域建的项目没有组织 → 谁都看不到，收编后归该组织
     {ok, _} = bosun_project:create(#{<<"key">> => <<"OLD">>, <<"name">> => <<"Legacy">>}),
     {ok, _} = bosun_filter:create(#{<<"name">> => <<"old">>, <<"query">> => <<"project = OLD">>}),
+    {ok, _} = bosun_task:create(<<"OLD">>, #{<<"title">> => <<"legacy widget">>}),
+    ok = bosun_search:sync(),
     {#{<<"id">> := OrgId}, A} = register(<<"Acme">>, <<"admin@acme.io">>, <<"Alice">>),
     PA = principal(A),
     {ok, []} = bosun_scope:with(PA, fun() -> bosun_project:list(#{}) end),
+    {ok, []} = bosun_scope:with(PA, fun() -> bosun_search:search(<<"widget">>, #{}) end),
     ?assertEqual({error, not_found}, bosun_org:adopt_orphans(<<"o999">>)),
     {ok, 1} = bosun_org:adopt_orphans(OrgId),
     {ok, 0} = bosun_org:adopt_orphans(OrgId),
     bosun_scope:with(PA, fun() ->
         {ok, [#{<<"key">> := <<"OLD">>, <<"org_id">> := OrgId}]} = bosun_project:list(#{}),
-        {ok, [#{<<"name">> := <<"old">>}]} = bosun_filter:list()
+        {ok, [#{<<"name">> := <<"old">>}]} = bosun_filter:list(),
+        %% 收编时重建了索引，meta 里的 org 跟着变
+        {ok, [#{id := <<"OLD-1">>}]} = bosun_search:search(<<"widget">>, #{})
     end).

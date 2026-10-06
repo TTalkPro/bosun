@@ -94,6 +94,8 @@ adopt_orphans(OrgId) ->
                 length(Ps)
             end),
             logger:notice("bosun_org: ~b orphan projects adopted by ~s", [N, OrgId]),
+            %% 索引 meta 里记着项目的组织，收编后要重建
+            _ = N > 0 andalso bosun_search:reindex(),
             {ok, N}
     end.
 
