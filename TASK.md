@@ -69,3 +69,4 @@
 - [x] [Epic 进度与状态规则修正](tasks/2026-10-28-epic-progress-and-state.md)：取消项不阻碍完成率，Epic 不能在子任务未完成时手动 DONE
 - [x] [Epic 子任务 Kanban](tasks/2026-10-28-epic-kanban.md)：状态列拖拽、乐观更新、blocked / open question 可视化
 - [x] [API Key 安全轮换与审计](tasks/2026-10-28-api-key-rotation.md)：保留权限配置和历史，旧秘密值立即失效
+- [x] [shadcn/Tailwind 全量迁移](tasks/2026-10-28-shadcn-migration.md)：移除 MUI compat 与 DataGrid，前端保留 React + shadcn

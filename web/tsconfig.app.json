@@ -16,7 +16,7 @@
     "resolveJsonModule": true,
     "types": ["vitest/globals", "@testing-library/jest-dom"],
     "baseUrl": ".",
-    "paths": { "@mui/material": ["./src/mui-compat/material.tsx"], "@mui/material/styles": ["./src/mui-compat/material.tsx"], "@mui/lab": ["./src/mui-compat/lab.tsx"], "@mui/icons-material/*": ["./src/mui-compat/icons.ts"], "@mui/x-data-grid": ["./src/mui-compat/material.tsx"], "@/*": ["src/*"] }
+    "paths": { "@/*": ["src/*"] }
   },
   "include": ["src"]
 }
