@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Box, Button, MenuItem, TextField, Typography } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import { addFeedback, reviseFeedback } from '@/api/feedback';
 import type { Feedback, FeedbackKind } from '@/api/types';
 import MarkdownEditor from '@/components/markdown/MarkdownEditor';
 import SidePanel from '@/components/SidePanel';
 import { useApiError } from '@/components/useApiError';
+import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ALL_KINDS, KIND_LABEL, defaultKind } from './kinds';
 
 interface Props {
@@ -48,23 +49,28 @@ const FeedbackDialog = ({ taskId, feedback, editing, onClose, onSaved }: Props) 
       onClose={onClose}
       busy={busy}
       headerExtra={
-        <TextField select size="small" label="类型" value={kind} onChange={(e) => setKind(e.target.value as FeedbackKind)} sx={{ minWidth: 120 }} inputProps={{ 'aria-label': 'feedback kind' }}>
-          {ALL_KINDS.map((k) => <MenuItem key={k} value={k}>{KIND_LABEL[k]}</MenuItem>)}
-        </TextField>
+        <Select value={kind} onValueChange={(v) => setKind(v as FeedbackKind)}>
+          <SelectTrigger size="sm" className="min-w-28" aria-label="feedback kind">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ALL_KINDS.map((k) => <SelectItem key={k} value={k}>{KIND_LABEL[k]}</SelectItem>)}
+          </SelectContent>
+        </Select>
       }
       actions={
         <>
-          <Button onClick={onClose} disabled={busy}>取消</Button>
-          <Button variant="contained" onClick={submit} disabled={busy}>{editing ? '保存' : '提交'}</Button>
+          <Button variant="outline" onClick={onClose} disabled={busy}>取消</Button>
+          <Button onClick={submit} disabled={busy}>{editing ? '保存' : '提交'}</Button>
         </>
       }
     >
-      <Box sx={{ flex: 1, minHeight: 0 }}>
+      <div className="min-h-0 flex-1">
         <MarkdownEditor value={editing?.content ?? ''} onChange={setContent} minHeight={200} fill autoFocus placeholder="写下说明、评审意见、问题或回答…支持 Markdown 与 mermaid" />
-      </Box>
-      <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
         {editing ? '修订会追加一条新的 Feedback，原条目标记为作废并保留在线索里；没有删除。' : 'Feedback 只追加不删除；自己写的条目可以修订（生成新版本，旧版本作废）。'}
-      </Typography>
+      </p>
     </SidePanel>
   );
 };
