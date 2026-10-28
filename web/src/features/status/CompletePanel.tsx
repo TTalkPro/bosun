@@ -1,12 +1,16 @@
 import { useState } from 'react';
-import { Alert, Button, Checkbox, FormControlLabel, Stack, TextField, Typography } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import { transitionTask } from '@/api/tasks';
 import { useMe } from '@/api/auth';
 import type { Status, Task } from '@/api/types';
 import SidePanel from '@/components/SidePanel';
 import { useApiError } from '@/components/useApiError';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { STATUS_LABEL, transitionLabel } from '@/features/tasks/status';
+import { cn } from '@/lib/utils';
 
 interface Props {
   task: Task;
@@ -58,30 +62,54 @@ const CompletePanel = ({ task, to, onClose, onChanged }: Props) => {
       title={`${label} ${task.id}`}
       onClose={onClose}
       busy={busy}
-      actions={<><Button onClick={onClose} disabled={busy}>取消</Button><Button variant="contained" onClick={submit} disabled={busy}>{label}</Button></>}
+      actions={<><Button variant="outline" onClick={onClose} disabled={busy}>取消</Button><Button onClick={submit} disabled={busy}>{label}</Button></>}
     >
-      <Stack spacing={2}>
+      <div className="space-y-4">
         {selfVerify && (
-          <Alert severity={lastDonePassed ? 'success' : 'warning'}>
+          <div className={cn('rounded-md border p-3 text-sm',
+            lastDonePassed
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+              : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400')}>
             {lastDonePassed
               ? `你是执行方；最近一次「完成」已记录通过的测试（${lastDone?.tests?.command || '未写命令'}），可以自验收。`
               : '你是执行方：自己验收必须记录通过的测试结果，否则后端会拒绝。'}
-          </Alert>
+          </div>
         )}
-        <TextField label="提交 hash" value={commits} onChange={(e) => setCommits(e.target.value)} autoFocus
-          helperText={to === 'DONE' ? '空格或逗号分隔；没有提交就留空，并在 Feedback 里说明' : '可选'}
-          InputProps={{ sx: { fontFamily: '"JetBrains Mono", Menlo, monospace' } }} />
-        <FormControlLabel control={<Checkbox checked={withTests} onChange={(e) => setWithTests(e.target.checked)} />} label="记录测试结果" />
+        <div>
+          <Label htmlFor="complete-commits">提交 hash</Label>
+          <Input id="complete-commits" value={commits} onChange={(e) => setCommits(e.target.value)} autoFocus className="font-mono" />
+          <p className="mt-1 text-xs text-muted-foreground">
+            {to === 'DONE' ? '空格或逗号分隔；没有提交就留空，并在 Feedback 里说明' : '可选'}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Checkbox id="complete-with-tests" checked={withTests} onCheckedChange={(v) => setWithTests(!!v)} />
+          <Label htmlFor="complete-with-tests">记录测试结果</Label>
+        </div>
         {withTests && (
-          <Stack spacing={1.5} sx={{ pl: 1, borderLeft: 2, borderColor: 'divider' }}>
-            <TextField label="命令" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="rebar3 eunit && rebar3 ct" InputProps={{ sx: { fontFamily: '"JetBrains Mono", Menlo, monospace' } }} />
-            <FormControlLabel control={<Checkbox checked={passed} onChange={(e) => setPassed(e.target.checked)} />} label="全部通过" />
-            <TextField label="结果摘要" value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="28 eunit + 4 ct passed" />
-          </Stack>
+          <div className="space-y-3 border-l-2 pl-4">
+            <div>
+              <Label htmlFor="complete-command">命令</Label>
+              <Input id="complete-command" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="rebar3 eunit && rebar3 ct" className="font-mono" />
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox id="complete-passed" checked={passed} onCheckedChange={(v) => setPassed(!!v)} />
+              <Label htmlFor="complete-passed">全部通过</Label>
+            </div>
+            <div>
+              <Label htmlFor="complete-summary">结果摘要</Label>
+              <Input id="complete-summary" value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="28 eunit + 4 ct passed" />
+            </div>
+          </div>
         )}
-        <TextField label="历史备注（可选）" value={comment} onChange={(e) => setComment(e.target.value)} />
-        <Typography variant="caption" color="text.secondary">提交 hash 与测试结果会进入状态历史，作为完成证据；提出方或第三方验收不需要测试记录。</Typography>
-      </Stack>
+        <div>
+          <Label htmlFor="complete-comment">历史备注（可选）</Label>
+          <Input id="complete-comment" value={comment} onChange={(e) => setComment(e.target.value)} />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          提交 hash 与测试结果会进入状态历史，作为完成证据；提出方或第三方验收不需要测试记录。
+        </p>
+      </div>
     </SidePanel>
   );
 };
