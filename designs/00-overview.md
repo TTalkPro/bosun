@@ -1,7 +1,7 @@
 # Bosun 总体设计
 
 > Bosun（水手长）—— 一个面向「人 + Agent」协作的轻量任务管理系统。
-> 后端 Erlang/OTP，前端 React + MUI，对外同时提供 REST（给前端）与 MCP（给 Agent）两套接口。
+> 后端 Erlang/OTP，前端 React + shadcn/ui + Tailwind CSS，对外同时提供 REST（给前端）与 MCP（给 Agent）两套接口。
 
 ## 1. 目标与边界
 
@@ -61,7 +61,7 @@
 | 组件 | 选择 |
 |---|---|
 | 框架 | React 19 + TypeScript + Vite 7 |
-| UI | MUI 7（`@mui/material`、`@mui/x-data-grid`、`@mui/lab`）、`@mui/icons-material` |
+| UI | shadcn/ui + Tailwind CSS + `lucide-react` |
 | 路由 | react-router 7（data router） |
 | 数据 | SWR + axios |
 | 通知 | notistack |

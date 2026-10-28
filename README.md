@@ -3,7 +3,7 @@
 面向「人 + Agent」协作的轻量任务管理系统。
 
 - 后端：Erlang/OTP 28，rebar3 umbrella，Mnesia 存储
-- 前端：React 19 + MUI 7，Milkdown 编辑器，GFM + Mermaid 渲染
+- 前端：React 19 + shadcn/ui + Tailwind CSS，Milkdown 编辑器，GFM + Mermaid 渲染
 - 接口：REST（前端）+ MCP（Agent，基于 [beamai_extra](https://github.com/TTalkPro/beamai_extra) 的 `beamai_mcp`）
 - 检索：[bitcask](https://github.com/DavidAlphaFox/bitcask) BM25 + jieba 分词（纯索引，可随时从 Mnesia 重建）
 
