@@ -1,9 +1,12 @@
 import { useState } from 'react';
-import { Button, Stack, TextField, Typography } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import { createFilter, updateFilter, type SavedFilter } from '@/api/query';
 import SidePanel from '@/components/SidePanel';
 import { useApiError } from '@/components/useApiError';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 
 interface Props {
   /** 新建时的初始 BQL */
@@ -48,22 +51,40 @@ const FilterFormPanel = ({ query, editing, onClose, onSaved }: Props) => {
       busy={busy}
       actions={
         <>
-          <Button onClick={onClose} disabled={busy}>取消</Button>
-          <Button variant="contained" onClick={submit} disabled={busy}>{editing ? '保存' : '创建'}</Button>
+          <Button variant="outline" onClick={onClose} disabled={busy}>取消</Button>
+          <Button onClick={submit} disabled={busy}>{editing ? '保存' : '创建'}</Button>
         </>
       }
     >
-      <Stack spacing={2}>
-        <TextField label="名称" value={name} onChange={(e) => { setName(e.target.value); setErrors({}); }} error={!!errors.name} helperText={errors.name} autoFocus
-          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} />
-        <TextField
-          label="BQL" value={bql} onChange={(e) => { setBql(e.target.value); setErrors({}); }}
-          multiline minRows={3} maxRows={8}
-          error={!!errors.query} helperText={errors.query ?? '空查询 = 全部任务'}
-          InputProps={{ sx: { fontFamily: '"JetBrains Mono", Menlo, monospace', fontSize: 14 } }}
-        />
-        <Typography variant="caption" color="text.secondary">保存后出现在左侧「筛选器」里，一键打开。</Typography>
-      </Stack>
+      <div className="space-y-4">
+        <div>
+          <label htmlFor="filter-name" className="mb-1 block text-sm font-medium">名称</label>
+          <Input
+            id="filter-name"
+            value={name}
+            onChange={(e) => { setName(e.target.value); setErrors({}); }}
+            aria-invalid={!!errors.name}
+            autoFocus
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+          />
+          {errors.name && <p className="mt-1 text-xs text-destructive">{errors.name}</p>}
+        </div>
+        <div>
+          <label htmlFor="filter-bql" className="mb-1 block text-sm font-medium">BQL</label>
+          <Textarea
+            id="filter-bql"
+            value={bql}
+            onChange={(e) => { setBql(e.target.value); setErrors({}); }}
+            aria-invalid={!!errors.query}
+            className={cn('min-h-20 resize-y font-mono text-sm')}
+            rows={3}
+          />
+          <p className={cn('mt-1 text-xs', errors.query ? 'text-destructive' : 'text-muted-foreground')}>
+            {errors.query ?? '空查询 = 全部任务'}
+          </p>
+        </div>
+        <p className="text-xs text-muted-foreground">保存后出现在左侧「筛选器」里，一键打开。</p>
+      </div>
     </SidePanel>
   );
 };
