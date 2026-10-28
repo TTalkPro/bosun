@@ -1,12 +1,17 @@
 import { useState } from 'react';
-import { Autocomplete, Box, Button, Chip, MenuItem, Stack, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
-import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
+import { Flag } from 'lucide-react';
 import { useSnackbar } from 'notistack';
 import { createTask, useEpics } from '@/api/tasks';
 import type { Priority, Task, TaskKind } from '@/api/types';
 import MarkdownEditor from '@/components/markdown/MarkdownEditor';
 import SidePanel from '@/components/SidePanel';
 import { useApiError } from '@/components/useApiError';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 import { PRIORITY_LABEL } from './status';
 
 interface Props {
@@ -26,6 +31,7 @@ const TaskFormDialog = ({ open, onClose, projectKey, onCreated, defaultEpic }: P
   const { data: epics } = useEpics(projectKey);
   const [priority, setPriority] = useState<Priority>('medium');
   const [labels, setLabels] = useState<string[]>([]);
+  const [labelInput, setLabelInput] = useState('');
   const [assignee, setAssignee] = useState('');
   const [description, setDescription] = useState('');
   const [titleError, setTitleError] = useState<string>();
@@ -59,49 +65,105 @@ const TaskFormDialog = ({ open, onClose, projectKey, onCreated, defaultEpic }: P
       actions={
         <>
           <Button onClick={onClose} disabled={busy}>取消</Button>
-          <Button variant="contained" onClick={submit} disabled={busy}>创建</Button>
+          <Button onClick={submit} disabled={busy}>创建</Button>
         </>
       }
     >
-      <Stack spacing={2} sx={{ flex: 1, minHeight: 0 }}>
-        <Stack direction="row" spacing={2} alignItems="center" useFlexGap flexWrap="wrap">
-          <ToggleButtonGroup size="small" exclusive value={kind} onChange={(_, v: TaskKind | null) => { if (v) setKind(v); }}
-            sx={{ '& .MuiToggleButton-root': { textTransform: 'none', px: 1.5 } }}>
-            <ToggleButton value="task">任务</ToggleButton>
-            <ToggleButton value="epic"><FlagOutlinedIcon sx={{ fontSize: 16, mr: 0.5 }} />Epic</ToggleButton>
-          </ToggleButtonGroup>
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="inline-flex rounded-md border p-0.5">
+            {(['task', 'epic'] as TaskKind[]).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setKind(value)}
+                className={cn('inline-flex h-8 items-center gap-1.5 rounded-sm px-3 text-sm font-medium',
+                  kind === value ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+              >
+                {value === 'epic' && <Flag className="size-4" />}
+                {value === 'epic' ? 'Epic' : '任务'}
+              </button>
+            ))}
+          </div>
           {kind === 'task' ? (
-            <TextField select size="small" label="所属 Epic" value={epic} onChange={(e) => setEpic(e.target.value)} sx={{ minWidth: 260 }}
-              helperText={epics && epics.tasks.length === 0 ? '本项目还没有 Epic' : undefined}>
-              <MenuItem value="">（无）</MenuItem>
-              {(epics?.tasks ?? []).map((e) => <MenuItem key={e.id} value={e.id}>{e.id} · {e.title}</MenuItem>)}
-              {defaultEpic && !(epics?.tasks ?? []).some((e) => e.id === defaultEpic) && <MenuItem value={defaultEpic}>{defaultEpic}</MenuItem>}
-            </TextField>
+            <div className="min-w-64">
+              <Label htmlFor="task-epic">所属 Epic</Label>
+              <Select value={epic || '__none__'} onValueChange={(value) => setEpic(value === '__none__' ? '' : value)}>
+                <SelectTrigger id="task-epic" className="mt-1 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">（无）</SelectItem>
+                  {(epics?.tasks ?? []).map((item) => <SelectItem key={item.id} value={item.id}>{item.id} · {item.title}</SelectItem>)}
+                  {defaultEpic && !(epics?.tasks ?? []).some((item) => item.id === defaultEpic) && (
+                    <SelectItem value={defaultEpic}>{defaultEpic}</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+              {epics && epics.tasks.length === 0 && <p className="mt-1 text-xs text-muted-foreground">本项目还没有 Epic</p>}
+            </div>
           ) : (
-            <Typography variant="caption" color="text.secondary">Epic 是一个整体目标；建好后把任务挂上去作为步骤，进度按已验收的步骤数计算。</Typography>
+            <p className="text-xs text-muted-foreground">Epic 是一个整体目标；建好后把任务挂上去作为步骤，进度按已验收的步骤数计算。</p>
           )}
-        </Stack>
-        <TextField label="标题" value={title} onChange={(e) => { setTitle(e.target.value); setTitleError(undefined); }} error={!!titleError} helperText={titleError} autoFocus
-          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(); }} />
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-          <TextField select label="优先级" value={priority} onChange={(e) => setPriority(e.target.value as Priority)} sx={{ minWidth: 140 }}>
-            {(Object.keys(PRIORITY_LABEL) as Priority[]).map((p) => <MenuItem key={p} value={p}>{PRIORITY_LABEL[p]}</MenuItem>)}
-          </TextField>
-          <Autocomplete
-            multiple freeSolo options={[]} value={labels} onChange={(_, v) => setLabels(v as string[])}
-            renderTags={(value, getTagProps) => value.map((option, index) => <Chip size="small" label={option} {...getTagProps({ index })} key={option} />)}
-            renderInput={(params) => <TextField {...params} label="标签" placeholder="回车添加" />}
-            sx={{ flex: 1 }}
+        </div>
+        <div>
+          <Label htmlFor="task-title">标题</Label>
+          <Input
+            id="task-title"
+            value={title}
+            onChange={(e) => { setTitle(e.target.value); setTitleError(undefined); }}
+            aria-invalid={!!titleError}
+            autoFocus
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(); }}
           />
-          <TextField label="预派执行人（可选）" value={assignee} onChange={(e) => setAssignee(e.target.value)} placeholder="keel/feature-x" sx={{ minWidth: 200 }} />
-        </Stack>
-        <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>描述（Markdown）</Typography>
-          <Box sx={{ flex: 1, minHeight: 0 }}>
+          {titleError && <p className="mt-1 text-xs text-destructive">{titleError}</p>}
+        </div>
+        <div className="flex flex-col gap-4 sm:flex-row">
+          <div className="sm:w-36">
+            <Label htmlFor="task-priority">优先级</Label>
+            <Select value={priority} onValueChange={(value) => setPriority(value as Priority)}>
+              <SelectTrigger id="task-priority" className="mt-1 w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {(Object.keys(PRIORITY_LABEL) as Priority[]).map((item) => <SelectItem key={item} value={item}>{PRIORITY_LABEL[item]}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="min-w-0 flex-1">
+            <Label htmlFor="task-label-input">标签</Label>
+            <Input
+              id="task-label-input"
+              value={labelInput}
+              placeholder="回车添加"
+              onChange={(e) => setLabelInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' && e.key !== ',') return;
+                e.preventDefault();
+                const value = labelInput.trim();
+                if (value && !labels.includes(value)) setLabels([...labels, value]);
+                setLabelInput('');
+              }}
+            />
+            {labels.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {labels.map((label) => (
+                  <Badge key={label} variant="secondary">
+                    {label}
+                    <button type="button" onClick={() => setLabels(labels.filter((item) => item !== label))} aria-label={`删除标签 ${label}`} className="ml-0.5 rounded-full opacity-70 hover:opacity-100">×</button>
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="sm:w-52">
+            <Label htmlFor="task-assignee">预派执行人（可选）</Label>
+            <Input id="task-assignee" value={assignee} placeholder="keel/feature-x" className="mt-1" onChange={(e) => setAssignee(e.target.value)} />
+          </div>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <p className="mb-1 text-xs text-muted-foreground">描述（Markdown）</p>
+          <div className="min-h-0 flex-1">
             <MarkdownEditor value="" onChange={setDescription} minHeight={240} fill />
-          </Box>
-        </Box>
-      </Stack>
+          </div>
+        </div>
+      </div>
     </SidePanel>
   );
 };
