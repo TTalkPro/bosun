@@ -1,12 +1,58 @@
 import { useState, type FormEvent } from 'react';
 import { Link as RouterLink, Navigate, useNavigate } from 'react-router';
-import { Alert, Button, Link, Stack, TextField, Typography } from '@mui/material';
 import { register, requestCode, useMe, type CodeSent } from '@/api/auth';
 import { isApiError } from '@/api/client';
 import AuthShell from '@/features/auth/AuthShell';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { paths } from '@/routes/paths';
+import { cn } from '@/lib/utils';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+const Alert = ({ severity, children }: { severity: 'error' | 'success' | 'warning'; children: React.ReactNode }) => (
+  <div className={cn('rounded-md border p-3 text-sm',
+    severity === 'error' && 'border-destructive/30 bg-destructive/10 text-destructive',
+    severity === 'success' && 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+    severity === 'warning' && 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400')}>
+    {children}
+  </div>
+);
+
+interface FieldProps {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  error?: string;
+  helper?: string;
+  type?: string;
+  autoFocus?: boolean;
+  autoComplete?: string;
+  inputMode?: 'numeric';
+  maxLength?: number;
+  className?: string;
+}
+
+const Field = ({ id, label, value, onChange, error, helper, type = 'text', autoFocus, autoComplete, inputMode, maxLength, className }: FieldProps) => (
+  <div>
+    <Label htmlFor={id}>{label}</Label>
+    <Input
+      id={id}
+      type={type}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-invalid={!!error}
+      autoFocus={autoFocus}
+      autoComplete={autoComplete}
+      inputMode={inputMode}
+      maxLength={maxLength}
+      className={cn(maxLength === 6 && 'font-mono tracking-[4px]', className)}
+    />
+    <p className={error ? 'mt-1 text-xs text-destructive' : 'mt-1 text-xs text-muted-foreground'}>{error ?? helper}</p>
+  </div>
+);
 
 // 两步：① 邮箱 → 发验证码 ② 验证码 + 组织名 + 显示名 + 密码 → 建组织，注册人即管理员
 const RegisterPage = () => {
@@ -57,30 +103,29 @@ const RegisterPage = () => {
   return (
     <AuthShell title="注册组织" subtitle="注册人成为组织管理员，之后在「组织」页给同事开账号">
       {!sent ? (
-        <form onSubmit={sendCode} noValidate>
-          <Stack spacing={2}>
-            {errors.form && <Alert severity="error">{errors.form}</Alert>}
-            <TextField label="管理员邮箱" type="email" value={email} onChange={(e) => setEmail(e.target.value)} error={!!errors.email} helperText={errors.email ?? '会收到一封带 6 位验证码的邮件'} autoFocus autoComplete="email" />
-            <Button type="submit" variant="contained" size="large" disabled={busy}>发送验证码</Button>
-            <Link component={RouterLink} to={paths.login} variant="body2" sx={{ alignSelf: 'center' }}>已有账号？去登录</Link>
-          </Stack>
+        <form onSubmit={sendCode} noValidate className="space-y-4">
+          {errors.form && <Alert severity="error">{errors.form}</Alert>}
+          <Field
+            id="reg-email" label="管理员邮箱" type="email" value={email} onChange={setEmail}
+            error={errors.email} helper="会收到一封带 6 位验证码的邮件" autoFocus autoComplete="email"
+          />
+          <Button type="submit" size="lg" className="w-full" disabled={busy}>发送验证码</Button>
+          <RouterLink to={paths.login} className="mx-auto block w-fit text-sm text-primary hover:underline">已有账号？去登录</RouterLink>
         </form>
       ) : (
-        <form onSubmit={submit} noValidate>
-          <Stack spacing={2}>
-            {sent.delivery === 'log'
-              ? <Alert severity="warning">服务端没有配置 SMTP：验证码打在 Bosun 的服务端日志里（<code>bosun_mailer [log mode]</code>），请到日志里找。</Alert>
-              : <Alert severity="success">验证码已发到 {sent.email}，{Math.round(sent.expires_in / 60)} 分钟内有效。</Alert>}
-            {errors.form && <Alert severity="error">{errors.form}</Alert>}
-            <Typography variant="body2" color="text.secondary">
-              {sent.email} · <Link component="button" type="button" onClick={() => { setSent(null); setCode(''); }}>换个邮箱</Link>
-            </Typography>
-            <TextField label="验证码" value={code} onChange={(e) => setCode(e.target.value)} error={!!errors.code} helperText={errors.code} autoFocus inputProps={{ inputMode: 'numeric', maxLength: 6, style: { fontFamily: 'monospace', letterSpacing: 4 } }} />
-            <TextField label="组织名" value={orgName} onChange={(e) => setOrgName(e.target.value)} error={!!errors.org_name} helperText={errors.org_name} />
-            <TextField label="你的显示名" value={name} onChange={(e) => setName(e.target.value)} error={!!errors.name} helperText={errors.name ?? '创建 / 执行 / Feedback 都用这个名字署名'} />
-            <TextField label="密码" type="password" value={password} onChange={(e) => setPassword(e.target.value)} error={!!errors.password} helperText={errors.password ?? '至少 8 位'} autoComplete="new-password" />
-            <Button type="submit" variant="contained" size="large" disabled={busy}>创建组织</Button>
-          </Stack>
+        <form onSubmit={submit} noValidate className="space-y-4">
+          {sent.delivery === 'log'
+            ? <Alert severity="warning">服务端没有配置 SMTP：验证码打在 Bosun 的服务端日志里（<code>bosun_mailer [log mode]</code>），请到日志里找。</Alert>
+            : <Alert severity="success">验证码已发到 {sent.email}，{Math.round(sent.expires_in / 60)} 分钟内有效。</Alert>}
+          {errors.form && <Alert severity="error">{errors.form}</Alert>}
+          <p className="text-sm text-muted-foreground">
+            {sent.email} · <button type="button" className="text-primary hover:underline" onClick={() => { setSent(null); setCode(''); }}>换个邮箱</button>
+          </p>
+          <Field id="reg-code" label="验证码" value={code} onChange={setCode} error={errors.code} autoFocus inputMode="numeric" maxLength={6} />
+          <Field id="reg-org" label="组织名" value={orgName} onChange={setOrgName} error={errors.org_name} />
+          <Field id="reg-name" label="你的显示名" value={name} onChange={setName} error={errors.name} helper="创建 / 执行 / Feedback 都用这个名字署名" />
+          <Field id="reg-password" label="密码" type="password" value={password} onChange={setPassword} error={errors.password} helper="至少 8 位" autoComplete="new-password" />
+          <Button type="submit" size="lg" className="w-full" disabled={busy}>创建组织</Button>
         </form>
       )}
     </AuthShell>
