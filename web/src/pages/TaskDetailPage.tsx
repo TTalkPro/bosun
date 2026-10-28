@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link as RouterLink, useParams } from 'react-router';
-import { Autocomplete, Box, Breadcrumbs, Button, Chip, Grid, IconButton, InputBase, Link, MenuItem, Paper, Skeleton, Stack, TextField, Tooltip, Typography } from '@mui/material';
+import { Autocomplete, Box, Breadcrumbs, Button, Chip, Grid, IconButton, InputBase, Link, MenuItem, Paper, Skeleton, Stack, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material';
 import CommitIcon from '@mui/icons-material/Commit';
 import FlagIcon from '@mui/icons-material/Flag';
 import AddIcon from '@mui/icons-material/Add';
@@ -18,6 +18,7 @@ import TaskIdChip from '@/components/TaskIdChip';
 import ActorChip from '@/components/ActorChip';
 import EpicChip from '@/components/EpicChip';
 import EpicProgressBar from '@/components/EpicProgressBar';
+import EpicKanban from '@/features/epics/EpicKanban';
 import TaskTable from '@/features/tasks/TaskTable';
 import TaskFormDialog from '@/features/tasks/TaskFormDialog';
 import LinksCard from '@/features/links/LinksCard';
@@ -97,6 +98,7 @@ const TaskDetailPage = () => {
   // null = 关闭；'new' = 新增；Feedback = 修订该条
   const [feedbackDialog, setFeedbackDialog] = useState<'new' | Feedback | null>(null);
   const [creatingStep, setCreatingStep] = useState(false);
+  const [stepView, setStepView] = useState<'table' | 'kanban'>('table');
   const isEpic = task?.kind === 'epic';
   const { data: epics } = useEpics(task && !isEpic ? task.project_key : undefined);
 
@@ -183,7 +185,15 @@ const TaskDetailPage = () => {
                   <Box sx={{ flex: 1 }} />
                   <Button size="small" variant="outlined" startIcon={<AddIcon />} onClick={() => setCreatingStep(true)}>新建步骤</Button>
                 </Stack>
-                <TaskTable rows={task.children ?? []} total={task.children?.length ?? 0} page={0} pageSize={100} onPageChange={() => {}} showProject compact />
+                <Stack direction="row" justifyContent="flex-end" sx={{ mb: 1 }}>
+                  <ToggleButtonGroup exclusive size="small" value={stepView} onChange={(_, v: 'table' | 'kanban' | null) => v && setStepView(v)}>
+                    <ToggleButton value="table">列表</ToggleButton>
+                    <ToggleButton value="kanban">看板</ToggleButton>
+                  </ToggleButtonGroup>
+                </Stack>
+                {stepView === 'kanban'
+                  ? <EpicKanban tasks={task.children ?? []} onChanged={(t) => mutate(t, false)} />
+                  : <TaskTable rows={task.children ?? []} total={task.children?.length ?? 0} page={0} pageSize={100} onPageChange={() => {}} showProject compact />}
               </Paper>
             )}
             <Paper variant="outlined" sx={{ p: 2 }}>

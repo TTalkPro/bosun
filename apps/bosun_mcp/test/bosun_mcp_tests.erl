@@ -17,7 +17,8 @@ mcp_test_() ->
         {"epics", fun epics/0},
         {"links", fun links/0},
         {"session identity", fun session_identity/0},
-        {"bound user & org scope", fun bound_user_scope/0}
+        {"bound user & org scope", fun bound_user_scope/0},
+        {"key scopes & actor binding", fun key_scopes_and_actor/0}
     ],
     {foreach, fun setup/0, fun(_) -> ok end,
      [fun(_) -> T end || T <- Tests]}.
@@ -279,6 +280,24 @@ register_org(OrgName, Email, Name) ->
                              <<"name">> => Name, <<"password">> => <<"secret123">>}),
     {ok, P} = bosun_user:principal(Uid, #{via => api_key}),
     P.
+
+key_scopes_and_actor() ->
+    A = register_org(<<"Acme">>, <<"alice@acme.io">>, <<"Alice">>),
+    {ok, _} = call(<<"create_project">>, #{<<"key">> => <<"SCP">>, <<"name">> => <<"scoped">>}),
+    in_session(fun() ->
+        bosun_identity:bind(self(), A#{scopes => [<<"read">>]}),
+        {error, E1} = call(<<"create_task">>, #{<<"project_key">> => <<"SCP">>, <<"title">> => <<"x">>}),
+        ?assertMatch(<<"forbidden_scope: this API key lacks the write scope", _/binary>>, E1),
+        {error, E2} = call(<<"create_project">>, #{<<"key">> => <<"NOPE">>, <<"name">> => <<"x">>}),
+        ?assertMatch(<<"forbidden_scope: this API key lacks the manage scope", _/binary>>, E2)
+    end),
+    in_session(fun() ->
+        bosun_identity:bind(self(), A#{scopes => [<<"read">>, <<"write">>, <<"manage">>]}),
+        {error, E3} = call(<<"create_task">>, #{<<"project_key">> => <<"SCP">>, <<"title">> => <<"x">>,
+                                                <<"actor">> => <<"someone-else">>}),
+        ?assertMatch(<<"forbidden_actor_override", _/binary>>, E3)
+    end),
+    ok.
 
 epics() ->
     {ok, _} = call(<<"create_project">>, #{<<"key">> => <<"EM">>, <<"name">> => <<"e">>}),

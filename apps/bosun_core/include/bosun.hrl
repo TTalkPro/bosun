@@ -124,7 +124,11 @@
     hash         :: binary(),        %% sha256(明文)
     name         :: binary(),
     prefix       :: binary(),        %% 展示用 <<"bsk_ab12cd">>
+    scopes       :: [binary()] | undefined, %% undefined = 旧 key，保持 legacy full access
+    project_keys :: [binary()] | undefined, %% undefined / [] = 本组织全部项目
+    expires_at   :: integer() | undefined,
     created_at   :: integer(),
+    rotated_at   :: integer() | undefined,
     last_used_at :: integer() | undefined,
     revoked_at   :: integer() | undefined
 }).

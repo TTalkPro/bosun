@@ -477,7 +477,8 @@ epics() ->
     {ok, E} = bosun_task:create(<<"EP">>, #{<<"title">> => <<"switch search to bitcask">>, <<"kind">> => <<"epic">>}),
     ?assertEqual(<<"epic">>, maps:get(<<"kind">>, E)),
     ?assertEqual(undefined, maps:get(<<"epic">>, E)),
-    ?assertMatch(#{<<"total">> := 0, <<"done">> := 0}, maps:get(<<"progress">>, E)),
+    ?assertMatch(#{<<"total">> := 0, <<"done">> := 0, <<"active_total">> := 0, <<"percent">> := 0},
+                 maps:get(<<"progress">>, E)),
     ?assertEqual([], maps:get(<<"children">>, E)),
     %% 普通任务缺省 kind = task，无 progress；挂到 Epic（含跨项目、id 大小写）
     {ok, T1} = bosun_task:create(<<"EP">>, #{<<"title">> => <<"index feedback">>, <<"epic">> => <<"ep-1">>}),
@@ -505,7 +506,12 @@ epics() ->
     {ok, _} = bosun_task_status:transition(<<"EP-2">>, <<"DONE">>, #{actor => <<"a">>}),
     {ok, _} = bosun_task_status:transition(<<"EP-2">>, <<"VERIFIED">>, #{actor => <<"b">>}),
     {ok, E2} = bosun_task:get(<<"EP-1">>),
-    ?assertMatch(#{<<"total">> := 2, <<"done">> := 1, <<"by_status">> := #{<<"VERIFIED">> := 1, <<"NEW">> := 1}}, maps:get(<<"progress">>, E2)),
+    ?assertMatch(#{<<"total">> := 2, <<"done">> := 1, <<"active_total">> := 2, <<"percent">> := 50,
+                   <<"by_status">> := #{<<"VERIFIED">> := 1, <<"NEW">> := 1}}, maps:get(<<"progress">>, E2)),
+    %% Epic 不能绕过子任务手动完成
+    {ok, _} = bosun_task_status:transition(<<"EP-1">>, <<"IN_PROGRESS">>, #{actor => <<"a">>}),
+    ?assertEqual({error, epic_children_incomplete},
+                 bosun_task_status:transition(<<"EP-1">>, <<"DONE">>, #{actor => <<"a">>})),
     ?assertEqual([<<"EP-2">>, <<"EQ-1">>], [maps:get(<<"id">>, C) || C <- maps:get(<<"children">>, E2)]),
     %% 列表过滤
     {ok, #{<<"tasks">> := [#{<<"id">> := <<"EP-1">>}]}} = bosun_task:list(<<"EP">>, #{<<"kind">> => <<"epic">>}),
@@ -524,6 +530,7 @@ epic_auto_flow() ->
     {ok, _} = bosun_task_status:transition(<<"EA-2">>, <<"DONE">>, #{actor => <<"a">>}),
     {ok, P1} = bosun_task:get(<<"EA-1">>),
     ?assertMatch(#{<<"total">> := 2, <<"done">> := 1,
+                   <<"active_total">> := 2, <<"percent">> := 50,
                    <<"by_status">> := #{<<"DONE">> := 1, <<"NEW">> := 1}}, maps:get(<<"progress">>, P1)),
     ?assertEqual(<<"NEW">>, maps:get(<<"status">>, P1)),
     %% 步骤全部完成（Epic 还在 NEW）→ Epic 自动 → DONE
@@ -548,7 +555,8 @@ epic_auto_flow() ->
     {ok, _} = bosun_task_status:transition(<<"EA-3">>, <<"CANCELLED">>, #{actor => <<"b">>}),
     {ok, P4} = bosun_task:get(<<"EA-1">>),
     ?assertEqual(<<"DONE">>, maps:get(<<"status">>, P4)),
-    ?assertMatch(#{<<"total">> := 2, <<"done">> := 1}, maps:get(<<"progress">>, P4)),
+    ?assertMatch(#{<<"total">> := 2, <<"done">> := 1, <<"cancelled">> := 1,
+                   <<"active_total">> := 1, <<"percent">> := 100}, maps:get(<<"progress">>, P4)),
     %% CANCELLED 的 Epic 不参与自动流转
     {ok, _} = bosun_task:create(<<"EA">>, #{<<"title">> => <<"later">>, <<"kind">> => <<"epic">>}),
     {ok, _} = bosun_task:create(<<"EA">>, #{<<"title">> => <<"step">>, <<"epic">> => <<"EA-4">>}),

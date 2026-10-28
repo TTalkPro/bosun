@@ -1,10 +1,9 @@
-import type { ChipProps } from '@mui/material';
+import type { ComponentProps } from 'react';
 import type { Status } from '@/api/types';
 import SoftChip from '@/components/SoftChip';
 import { STATUS_COLOR, STATUS_LABEL } from '@/features/tasks/status';
 
-const StatusChip = ({ status, ...rest }: { status: Status } & Omit<ChipProps, 'label' | 'color' | 'variant'>) => (
-  <SoftChip label={STATUS_LABEL[status]} tone={STATUS_COLOR[status]} sx={{ fontWeight: 700 }} {...rest} />
+const StatusChip = ({ status, ...rest }: { status: Status } & Omit<ComponentProps<typeof SoftChip>, 'tone'> & { sx?: unknown }) => (
+  <SoftChip tone={STATUS_COLOR[status]} className="font-bold" {...rest}>{STATUS_LABEL[status]}</SoftChip>
 );
-
 export default StatusChip;

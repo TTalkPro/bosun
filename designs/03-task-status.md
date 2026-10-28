@@ -31,6 +31,8 @@
 
 其余一律 `{invalid_transition, From, To}`，错误文本带上可用的目标状态。NEW → IN_PROGRESS 还要求没有未满足的依赖（见 12）：否则 `{blocked, [Ids]}`。DONE / VERIFIED 不能撤销（做完的只能重开）。REJECTED 与 CANCELLED 的区别：前者是执行方说「需求不对」，要提出方改；后者是谁都可以说「不需要了」。
 
+Epic 的 `→ DONE` 由子任务推导，不能提前手动关闭：只要有效子任务（排除 CANCELLED）没有全部进入 DONE / VERIFIED，手动迁移返回 `epic_children_incomplete`。子任务触发的自动 DONE 在同一事务里完成，不受这条手动校验限制。
+
 ### 自动流转：Epic 随步骤级联
 
 上表管**手动**迁移。步骤（挂在该 Epic 下的任务，见 02）迁移时，同一事务内同步 Epic 自身状态，不走迁移表（与 12 的「替代自动撤销」同一模式）：

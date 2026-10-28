@@ -1,24 +1,27 @@
 import { useState } from 'react';
-import { Box, Button, Card, CardContent, Chip, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
-import KeyIcon from '@mui/icons-material/VpnKeyOutlined';
+import { KeyRound, Plus } from 'lucide-react';
 import { useSnackbar } from 'notistack';
-import { revokeKey, useKeys, useMe, type ApiKey } from '@/api/auth';
+import { rotateKey, revokeKey, useKeys, useMe, type ApiKey, type CreatedApiKey } from '@/api/auth';
 import { ActorAvatar } from '@/components/ActorChip';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import CreatedKeyDialog from '@/features/account/CreatedKeyDialog';
 import RelativeTime from '@/components/RelativeTime';
 import SoftChip from '@/components/SoftChip';
 import { useApiError } from '@/components/useApiError';
 import KeyFormPanel from '@/features/account/KeyFormPanel';
 import PasswordPanel from '@/features/account/PasswordPanel';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
-// 账户：自己是谁、改密、API key
 const AccountPage = () => {
   const { data: me } = useMe();
   const { data: keysData } = useKeys();
   const [creating, setCreating] = useState(false);
   const [changingPw, setChangingPw] = useState(false);
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
+  const [rotating, setRotating] = useState<ApiKey | null>(null);
+  const [rotatedKey, setRotatedKey] = useState<CreatedApiKey | null>(null);
   const [busy, setBusy] = useState(false);
   const { enqueueSnackbar } = useSnackbar();
   const handleError = useApiError();
@@ -27,64 +30,107 @@ const AccountPage = () => {
   const doRevoke = async () => {
     if (!revoking) return;
     setBusy(true);
-    try { await revokeKey(revoking.id); enqueueSnackbar('已撤销', { variant: 'success' }); setRevoking(null); } catch (e) { handleError(e); } finally { setBusy(false); }
+    try {
+      await revokeKey(revoking.id);
+      enqueueSnackbar('已撤销', { variant: 'success' });
+      setRevoking(null);
+    } catch (e) { handleError(e); } finally { setBusy(false); }
+  };
+
+  const doRotate = async () => {
+    if (!rotating) return;
+    setBusy(true);
+    try {
+      setRotatedKey(await rotateKey(rotating.id));
+      setRotating(null);
+      enqueueSnackbar('已轮换，旧 key 已失效', { variant: 'success' });
+    } catch (e) { handleError(e); } finally { setBusy(false); }
   };
 
   if (!me) return null;
   const { user, org } = me;
 
   return (
-    <Box>
-      <Typography variant="h4" sx={{ mb: 3 }}>账户</Typography>
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardContent>
-          <Stack direction="row" spacing={2} alignItems="center" useFlexGap flexWrap="wrap">
+    <div className="space-y-6">
+      <h1 className="text-3xl font-bold">账户</h1>
+
+      <Card>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
             <ActorAvatar name={user.name} kind="human" size={48} />
-            <Box sx={{ flex: 1, minWidth: 200 }}>
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="h6">{user.name}</Typography>
-                <SoftChip label={user.role === 'admin' ? '管理员' : '成员'} tone={user.role === 'admin' ? 'primary' : 'default'} />
-              </Stack>
-              <Typography variant="body2" color="text.secondary">{user.email} · {org.name}</Typography>
-            </Box>
-            <Button variant="outlined" onClick={() => setChangingPw(true)}>修改密码</Button>
-          </Stack>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
+            <div className="min-w-52 flex-1">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-semibold">{user.name}</h2>
+                <SoftChip tone={user.role === 'admin' ? 'primary' : 'default'} label={user.role === 'admin' ? '管理员' : '成员'} />
+              </div>
+              <p className="text-sm text-muted-foreground">{user.email} · {org.name}</p>
+            </div>
+            <Button variant="outline" onClick={() => setChangingPw(true)}>修改密码</Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
             显示名是你在任务历史 / Feedback 里的署名，由组织管理员修改。
-          </Typography>
+          </p>
         </CardContent>
       </Card>
 
-      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 1.5 }}>
-        <KeyIcon color="action" />
-        <Typography variant="h6">API Key</Typography>
-        <Box sx={{ flex: 1 }} />
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreating(true)}>新建 Key</Button>
-      </Stack>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+      <div className="flex flex-wrap items-center gap-3">
+        <KeyRound className="size-5 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">API Key</h2>
+        <div className="flex-1" />
+        <Button onClick={() => setCreating(true)}><Plus className="size-4" />新建 Key</Button>
+      </div>
+      <p className="text-sm text-muted-foreground">
         给 Agent（Claude Code 等）连 MCP 用：<code>Authorization: Bearer &lt;key&gt;</code>。Key 代表你本人，只能看到本组织的项目。
-      </Typography>
-      <Card variant="outlined">
+      </p>
+
+      <Card className="py-0">
         {keys.length === 0 ? (
-          <CardContent><Typography color="text.secondary">还没有 key。</Typography></CardContent>
+          <CardContent className="py-6 text-muted-foreground">还没有 key。</CardContent>
         ) : (
-          <Box sx={{ overflowX: 'auto' }}>
-            <Table size="small">
-              <TableHead><TableRow><TableCell>名字</TableCell><TableCell>前缀</TableCell><TableCell>创建</TableCell><TableCell>最近使用</TableCell><TableCell>状态</TableCell><TableCell align="right" /></TableRow></TableHead>
-              <TableBody>
-                {keys.map((k) => (
-                  <TableRow key={k.id} sx={{ opacity: k.status === 'revoked' ? 0.5 : 1 }}>
-                    <TableCell>{k.name}</TableCell>
-                    <TableCell><code>{k.prefix}…</code></TableCell>
-                    <TableCell><RelativeTime value={k.created_at} /></TableCell>
-                    <TableCell>{k.last_used_at ? <RelativeTime value={k.last_used_at} /> : <Typography variant="caption" color="text.secondary">从未</Typography>}</TableCell>
-                    <TableCell>{k.status === 'active' ? <Chip size="small" color="success" variant="outlined" label="有效" /> : <Chip size="small" variant="outlined" label="已撤销" />}</TableCell>
-                    <TableCell align="right">{k.status === 'active' && <Button size="small" color="error" onClick={() => setRevoking(k)}>撤销</Button>}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Box>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>名字</TableHead>
+                <TableHead>前缀</TableHead>
+                <TableHead>权限</TableHead>
+                <TableHead>创建</TableHead>
+                <TableHead>最近使用</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {keys.map((k) => (
+                <TableRow key={k.id} className={k.status === 'revoked' ? 'opacity-50' : undefined}>
+                  <TableCell>{k.name}</TableCell>
+                  <TableCell><code>{k.prefix}…</code></TableCell>
+                  <TableCell>
+                    <div className="flex max-w-64 flex-wrap gap-1">
+                      {(k.scopes ?? ['*']).map((scope) => (
+                        <SoftChip key={scope} label={scope === '*' ? 'legacy 全量' : scope} />
+                      ))}
+                      {k.project_keys?.length ? <SoftChip label={`${k.project_keys.length} 项目`} /> : null}
+                    </div>
+                  </TableCell>
+                  <TableCell><RelativeTime value={k.created_at} /></TableCell>
+                  <TableCell>
+                    {k.last_used_at ? <RelativeTime value={k.last_used_at} /> : <span className="text-xs text-muted-foreground">从未</span>}
+                  </TableCell>
+                  <TableCell>
+                    <SoftChip tone={k.status === 'active' ? 'success' : 'default'} label={k.status === 'active' ? '有效' : '已撤销'} />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {k.status === 'active' && (
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => setRotating(k)}>轮换</Button>
+                        <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => setRevoking(k)}>撤销</Button>
+                      </div>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </Card>
 
@@ -100,7 +146,23 @@ const AccountPage = () => {
         onConfirm={doRevoke}
         onClose={() => setRevoking(null)}
       />
-    </Box>
+      <ConfirmDialog
+        open={!!rotating}
+        title="轮换这把 key？"
+        message={<>将生成新秘密值，旧 key 会立刻失效；权限和项目范围保持不变。<br /><code>{rotating?.prefix}…</code>（{rotating?.name}）</>}
+        confirmText="轮换"
+        busy={busy}
+        onConfirm={doRotate}
+        onClose={() => setRotating(null)}
+      />
+      {rotatedKey && (
+        <CreatedKeyDialog
+          apiKey={rotatedKey}
+          title={`Key「${rotatedKey.name}」已轮换`}
+          onClose={() => setRotatedKey(null)}
+        />
+      )}
+    </div>
   );
 };
 

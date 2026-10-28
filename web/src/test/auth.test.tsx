@@ -1,8 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { ThemeProvider } from '@mui/material';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import theme from '@/theme';
 import AuthGate from '@/components/AuthGate';
 import LoginPage from '@/pages/LoginPage';
 import { ApiError } from '@/api/client';
@@ -22,7 +20,7 @@ vi.mock('@/api/auth', () => ({ useMe: mocks.useMe, login: mocks.login }));
 
 const renderAt = (path: string) =>
   render(
-    <ThemeProvider theme={theme}>
+    <>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
@@ -32,7 +30,7 @@ const renderAt = (path: string) =>
           </Route>
         </Routes>
       </MemoryRouter>
-    </ThemeProvider>,
+    </>,
   );
 
 describe('AuthGate', () => {

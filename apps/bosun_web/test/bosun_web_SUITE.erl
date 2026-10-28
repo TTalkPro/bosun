@@ -201,7 +201,9 @@ mcp_end_to_end(Config) ->
     {401, _, _} = mcp_post(Url, [{"authorization", "Bearer bsk_nope"}], Init),
     %% 用 Cookie 也不行：/mcp 只认 key
     {401, _, _} = mcp_post(Url, [cookie_header(Config)], Init),
-    {201, #{<<"key">> := Key, <<"id">> := KeyId}} = req(post, Config, "/api/v1/keys", #{<<"name">> => <<"ct">>}),
+    {201, #{<<"key">> := Key, <<"id">> := KeyId, <<"scopes">> := [<<"manage">>, <<"read">>, <<"write">>]}} =
+        req(post, Config, "/api/v1/keys", #{<<"name">> => <<"ct">>,
+                                             <<"scopes">> => [<<"read">>, <<"write">>, <<"manage">>]}),
     Auth = {"authorization", "Bearer " ++ binary_to_list(Key)},
     {200, Hdrs, InitBody} = mcp_post(Url, [Auth], Init),
     Sid = proplists:get_value("mcp-session-id", Hdrs),
@@ -308,16 +310,32 @@ auth_flow(Config) ->
     {400, #{<<"field">> := <<"password">>}} = req(post, Bob, "/api/v1/auth/password", #{<<"current">> => <<"reset1234">>, <<"new">> => <<"x">>}),
     {204, _} = req(post, Bob, "/api/v1/auth/password", #{<<"current">> => <<"reset1234">>, <<"new">> => <<"newpass123">>}),
     _ = login(Base, <<"bob@acme.io">>, <<"newpass123">>),
-    %% key：建、列（无明文）、用 Bearer 打 REST、撤销
+    %% key：建、列（无明文）、用只读 Bearer 打 REST、写接口按 scope 拒绝、撤销
+    {201, _} = req(post, Config, "/api/v1/projects", #{<<"key">> => <<"KEYS">>, <<"name">> => <<"Keys">>}),
     {201, #{<<"key">> := Key, <<"id">> := Kid, <<"prefix">> := Prefix}} = req(post, Bob, "/api/v1/keys", #{<<"name">> => <<"laptop">>}),
     ?assertMatch(<<"bsk_", _/binary>>, Key),
     {200, #{<<"keys">> := [#{<<"id">> := Kid, <<"prefix">> := Prefix, <<"status">> := <<"active">>} = K]}} = req(get, Bob, "/api/v1/keys"),
     ?assertNot(maps:is_key(<<"key">>, K)),
     Bearer = [{base, Base}, {auth, {"authorization", "Bearer " ++ binary_to_list(Key)}}],
     {200, #{<<"via">> := <<"api_key">>, <<"user">> := #{<<"name">> := <<"Bob">>}}} = req(get, Bearer, "/api/v1/auth/me"),
+    {200, #{<<"projects">> := [_]}} = req(get, Bearer, "/api/v1/projects"),
+    {403, #{<<"error">> := <<"forbidden_scope">>}} =
+        req(post, Bearer, "/api/v1/projects/KEYS/tasks", #{<<"title">> => <<"denied">>}),
+    {403, #{<<"error">> := <<"forbidden_scope">>}} =
+        req(post, Bearer, "/api/v1/projects", #{<<"key">> => <<"NOPE">>, <<"name">> => <<"Nope">>}),
+    %% 轮换：旧秘密值立即失效；权限配置保留，新明文只返回一次
+    {404, _} = req(post, Config, "/api/v1/keys/" ++ binary_to_list(Kid) ++ "/rotate", #{}),
+    {201, #{<<"key">> := NewKey, <<"id">> := Kid, <<"rotated_at">> := RotatedAt,
+            <<"last_used_at">> := null, <<"scopes">> := [<<"read">>]}} =
+        req(post, Bob, "/api/v1/keys/" ++ binary_to_list(Kid) ++ "/rotate", #{}),
+    ?assertNotEqual(Key, NewKey),
+    ?assert(is_binary(RotatedAt)),
+    {401, _} = req(get, Bearer, "/api/v1/auth/me"),
+    NewBearer = [{base, Base}, {auth, {"authorization", "Bearer " ++ binary_to_list(NewKey)}}],
+    {200, #{<<"via">> := <<"api_key">>, <<"user">> := #{<<"name">> := <<"Bob">>}}} = req(get, NewBearer, "/api/v1/auth/me"),
     {404, _} = req(delete, Config, "/api/v1/keys/" ++ binary_to_list(Kid)),   %% 别人的 key 撤不了
     {204, _} = req(delete, Bob, "/api/v1/keys/" ++ binary_to_list(Kid)),
-    {401, _} = req(get, Bearer, "/api/v1/auth/me"),
+    {401, _} = req(get, NewBearer, "/api/v1/auth/me"),
     %% 登出：cookie 失效
     {204, _} = req(post, Bob, "/api/v1/auth/logout"),
     {401, _} = req(get, Bob, "/api/v1/auth/me"),

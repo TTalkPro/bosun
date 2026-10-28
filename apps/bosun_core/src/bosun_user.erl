@@ -158,7 +158,9 @@ principal(Id, Extra) when is_binary(Id) ->
 principal(#user{status = disabled}, _) -> {error, user_disabled};
 principal(#user{} = U, Extra) ->
     {ok, #{user_id => U#user.id, org_id => U#user.org_id, name => U#user.name, email => U#user.email,
-           role => U#user.role, via => maps:get(via, Extra, session), key_id => maps:get(key_id, Extra, undefined)}}.
+           role => U#user.role, via => maps:get(via, Extra, session), key_id => maps:get(key_id, Extra, undefined),
+           scopes => maps:get(scopes, Extra, undefined),
+           project_keys => maps:get(project_keys, Extra, undefined)}}.
 
 -spec parse_role(term()) -> {ok, admin | member} | {error, term()}.
 parse_role(admin) -> {ok, admin};

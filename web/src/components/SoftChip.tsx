@@ -1,26 +1,7 @@
-import { Chip, type ChipProps, alpha, useTheme } from '@mui/material';
-
-type Tone = 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'error' | 'info';
-
-// 淡底色标签：底色 = 主色 12%，文字 / 图标 = 主色深一档；比描边 chip 更轻，比实心 chip 更安静
-const SoftChip = ({ tone = 'default', sx, ...rest }: Omit<ChipProps, 'color' | 'variant'> & { tone?: Tone }) => {
-  const theme = useTheme();
-  const main = tone === 'default' ? theme.palette.text.secondary : theme.palette[tone].main;
-  const fg = tone === 'default' ? theme.palette.text.primary : theme.palette[tone].dark;
-  return (
-    <Chip
-      size="small"
-      {...rest}
-      sx={{
-        bgcolor: alpha(main, 0.12),
-        color: fg,
-        border: 'none',
-        '& .MuiChip-icon': { color: fg },
-        ...(theme.applyStyles('dark', { color: main, '& .MuiChip-icon': { color: main } }) as object),
-        ...sx,
-      }}
-    />
-  );
-};
-
+import type { ComponentProps, ReactNode } from 'react';
+import { cn } from '@/lib/utils';
+export type Tone = 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'error' | 'info';
+const TONE: Record<Tone, string> = { default:'bg-muted text-foreground', primary:'bg-primary/12 text-primary dark:text-primary-foreground', secondary:'bg-secondary text-secondary-foreground', success:'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400', warning:'bg-amber-500/15 text-amber-700 dark:text-amber-400', error:'bg-destructive/12 text-destructive', info:'bg-sky-500/12 text-sky-700 dark:text-sky-400' };
+type SoftChipProps = Omit<ComponentProps<'span'>, 'sx'> & { tone?: Tone; label?: ReactNode; icon?: ReactNode; sx?: unknown };
+const SoftChip = ({ className, tone = 'default', label, icon, sx, children, ...rest }: SoftChipProps) => (<span className={cn('inline-flex h-5.5 max-w-full items-center gap-1 rounded-md px-2 text-xs font-semibold whitespace-nowrap [&_svg]:size-3', TONE[tone], className)} style={typeof sx === 'object' ? sx as Record<string, unknown> : undefined} {...rest}>{icon}{label ?? children}</span>);
 export default SoftChip;

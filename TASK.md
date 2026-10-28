@@ -62,3 +62,10 @@
 - [x] README、设计文档 00–10
 - [x] `rebar3 check`（xref / dialyzer / eunit / ct）全部通过
 - [x] 重建后再用 Claude Code 走一遍 MCP 验收（本会话通过 `.mcp.json` 连上 bosun，BOS-3 ~ BOS-6 均由 MCP 建单 / 迁移 / 反馈）
+
+## 7. 业务审查（2026-10-28）
+- [x] [MCP API Key 权限分级](tasks/2026-10-28-mcp-key-permissions.md)：`read` / `write` / `manage` scopes、项目白名单、MCP 工具强制授权
+- [x] [MCP actor 身份收紧](tasks/2026-10-28-actor-identity-hardening.md)：绑定 API key 后禁止参数冒名
+- [x] [Epic 进度与状态规则修正](tasks/2026-10-28-epic-progress-and-state.md)：取消项不阻碍完成率，Epic 不能在子任务未完成时手动 DONE
+- [x] [Epic 子任务 Kanban](tasks/2026-10-28-epic-kanban.md)：状态列拖拽、乐观更新、blocked / open question 可视化
+- [x] [API Key 安全轮换与审计](tasks/2026-10-28-api-key-rotation.md)：保留权限配置和历史，旧秘密值立即失效

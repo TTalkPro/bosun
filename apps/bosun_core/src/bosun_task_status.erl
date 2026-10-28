@@ -104,6 +104,7 @@ transition(TaskId0, To0, Opts) ->
                                 case allowed(From, To) of
                                     false -> bosun_store:abort({invalid_transition, From, To});
                                     true ->
+                                        validate_epic_done_in_tx(T, To),
                                         check_self_verify(To, Actor, T, Tests),
                                         check_blocked(From, To, TaskId),
                                         Now = bosun_util:now_ms(),
@@ -137,6 +138,14 @@ transition(TaskId0, To0, Opts) ->
 %%====================================================================
 %% Epic 自动流转
 %%====================================================================
+
+%% Epic 的 DONE 必须由子任务推导；子任务迁移的自动 DONE 走 sync_epic_in_tx，不经过这里。
+validate_epic_done_in_tx(#task{kind = epic} = T, done) ->
+    case epic_complete(mnesia:index_read(task, T#task.id, #task.epic)) of
+        true -> ok;
+        false -> bosun_store:abort(epic_children_incomplete)
+    end;
+validate_epic_done_in_tx(_, _) -> ok.
 
 %% 步骤迁移后同步所属 Epic（同一事务内，见 designs/03 §自动流转）：
 %% - 全部步骤 DONE / VERIFIED / CANCELLED 且至少一个 DONE / VERIFIED → Epic 自动 → DONE

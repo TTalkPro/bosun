@@ -23,7 +23,7 @@ org        id (o<N>)   name · created_by · created_at · updated_at
 user       id (u<N>)   org_id* · email* (小写，全局唯一) · name (显示名，组织内唯一) · password (哈希元组)
                        · role (admin|member) · status (active|disabled) · created_at · updated_at · last_login_at
 session    id (sha256(token))   user_id* · created_at · expires_at · last_seen_at
-api_key    id (k<N>)   user_id* · hash* (sha256(key)) · name · prefix (bsk_xxxxxx，展示用) · created_at · last_used_at · revoked_at
+api_key    id (k<N>)   user_id* · hash* (sha256(key)) · name · prefix (bsk_xxxxxx，展示用) · created_at · rotated_at · last_used_at · revoked_at
 email_code email       code (6 位) · purpose (register) · expires_at (15 分钟) · attempts · sent_at
 project    + org_id*   （undefined = 升级前的孤儿项目）
 filter     + org_id*
@@ -34,7 +34,10 @@ actor      + org_id · user_id   （人 = 用户本人；Agent = 用的哪把 ke
 
 - 密码：`crypto:pbkdf2_hmac(sha256, Pw, Salt, 120000, 32)`，存 `{pbkdf2_sha256, Iter, Salt, Hash}`；比较用 `crypto:hash_equals/2`。最短 8 位。
 - 会话 token：32 字节随机，base64url；表里只存 sha256。30 天不活动过期；登录时顺手清掉该用户过期会话。
-- API Key：`bsk_` + 40 位十六进制（20 字节随机）。**只在创建时返回一次**；表里存 sha256 与前缀。撤销 = 写 `revoked_at`，不删（历史可查）。`last_used_at` 每分钟最多写一次。
+- API Key：`bsk_` + 40 位十六进制（20 字节随机）。**只在创建 / 轮换时返回一次**；表里存 sha256 与前缀。撤销 = 写 `revoked_at`，不删（历史可查）。轮换只替换秘密值并保留权限配置与 `created_at`，写 `rotated_at` 并清空 `last_used_at`；旧秘密值立即失效。`last_used_at` 每分钟最多写一次。
+  - `scopes`：`read` / `write` / `manage` 的有序集合；新 key 缺省只读。`*` 与缺失 `scopes` 的旧 key 表示全量权限。`identify` / `whoami` 始终可用。
+  - `project_keys`：项目 key 白名单；`undefined` / 空列表表示组织内全部项目。不可见项目按 `not_found` 处理。
+  - `expires_at`：未来 Unix 毫秒时间戳；到期认证返回 401。
 - 验证码：`crypto:strong_rand_bytes` 派生 6 位数字；同一邮箱 60 秒内不重发；错 5 次作废；注册成功即删。
 - 邮箱格式：`^[^@\s]+@[^@\s]+\.[^@\s]+$` 且 ≤ 254 字符，统一小写。
 
@@ -47,7 +50,7 @@ actor      + org_id · user_id   （人 = 用户本人；Agent = 用的哪把 ke
 | `bosun_user` | `create/2`（管理员建） · `get/1` · `list/1` · `update/3` · `authenticate(Email, Pw)` · `change_password/3` · `to_map/1` |
 | `bosun_password` | `hash/1` · `verify/2` · `validate/1` |
 | `bosun_session` | `create/1` → token · `lookup/1` → principal · `delete/1` |
-| `bosun_api_key` | `create(UserId, Name)` → 含明文 key · `list/1` · `revoke/2` · `authenticate/1` → principal |
+| `bosun_api_key` | `create(UserId, Name)` → 含明文 key · `rotate/2` → 新明文 + 保留配置 · `list/1` · `revoke/2` · `authenticate/1` → principal |
 | `bosun_email_code` | 验证码的生成 / 校验 / 限流；`peek/1` 只给测试 |
 | `bosun_mailer` | `send(To, Subject, Text)`：配置了 SMTP 走 `gen_smtp_client:send_blocking`，否则 `logger:notice` 打印（`mode/0` → `smtp | log`） |
 
@@ -81,6 +84,8 @@ actor      + org_id · user_id   （人 = 用户本人；Agent = 用的哪把 ke
 | 缺省 | 其余 `/api/v1/*` | Cookie 会话或 Bearer；通过后 `bosun_scope:set(P)`，并放进 `Req` 的 `bosun_principal` |
 | `admin` | `/api/v1/users*`、`/api/v1/org`、`/api/v1/export`、`/api/v1/import` | 同上且 role = admin，否则 403 |
 
+Bearer key 的 REST 写接口与 MCP 共用 scope：任务协作要求 `write`，项目 / 用户 / key / filter / 导入 / 改密要求 `manage`；不足返回 403 `forbidden_scope`。Cookie 会话仍代表用户本人，不按 key scope 降权。
+
 未通过：401 `{"error":"unauthorized"}`，`/mcp` 另带 `WWW-Authenticate: Bearer`。
 
 ### 4.2 端点
@@ -96,6 +101,7 @@ GET    /api/v1/org  · PATCH {name}                                             
 GET    /api/v1/users · POST {email, name, password, role}                      （admin）
 PATCH  /api/v1/users/:id  {name, role, status, password}                       （admin；不能停用 / 降级最后一个 admin）
 GET    /api/v1/keys · POST {name} → 201 {key: "bsk_...", ...}（仅此一次）
+POST   /api/v1/keys/:id/rotate                                                   → 201 {key: "bsk_...", ...}（仅此一次）
 DELETE /api/v1/keys/:id                                                        → 204（撤销）
 ```
 
@@ -105,7 +111,8 @@ DELETE /api/v1/keys/:id                                                        �
 
 - 无 key：401。key 撤销 / 用户停用：下一个请求起 401（每个请求都验）。
 - `bosun_identity` 身份里多 `user`（主体）；`identify` 不覆盖它。`whoami` 返回 `user: {id, name, email, org}`。
-- `bosun_mcp:tools/0` 给每个 handler 套一层：调用前 `bosun_scope:set(主体)`。
+- `bosun_mcp:tools/0` 给每个 handler 套一层：调用前 `bosun_scope:set(主体)`，并按工具检查 key scope。资源 / 提示按 `read` 授权；错误返回 `forbidden_scope`。
+- 已绑定主体的 MCP 会话不能在参数里传 `actor` / `author` 冒名；返回 `forbidden_actor_override`。系统作用域（运维脚本 / 纯领域测试）保持旧兼容。
 - `.mcp.json`：`"headers": {"Authorization": "Bearer ${BOSUN_API_KEY}"}`；README 写明先在「账户」页建 key、`export BOSUN_API_KEY=...`。
 
 ## 5. 前端（web/）
@@ -114,7 +121,7 @@ DELETE /api/v1/keys/:id                                                        �
 |---|---|
 | `/login` | 邮箱 + 密码；链接到注册 |
 | `/register` | 两步：① 邮箱 → 发码（提示 `delivery = log` 时去看服务端日志）② 验证码 + 组织名 + 显示名 + 密码 |
-| `/account` | 显示名 / 改密；**API Key**：列表（前缀、名字、创建 / 最近使用、状态）、新建（SidePanel，成功后整串只显示一次并可复制）、撤销（ConfirmDialog） |
+| `/account` | 显示名 / 改密；**API Key**：列表（前缀、名字、权限、项目范围、创建 / 最近使用、状态）、新建（权限预设、项目白名单、过期时间；SidePanel，成功后整串只显示一次并可复制）、撤销（ConfirmDialog） |
 | `/org` | admin：组织名；用户表（邮箱、名字、角色、状态、最近登录）；新建 / 编辑用户 SidePanel |
 
 - `api/auth.ts`：`useMe()`（SWR `/auth/me`）；axios 401 拦截 → 跳 `/login?next=...`（登录 / 注册页除外）。
@@ -139,7 +146,7 @@ DELETE /api/v1/keys/:id                                                        �
 
 ## 7. 测试
 
-- eunit `bosun_auth_tests`：注册流程（验证码限流 / 错码 / 过期）、登录、改密、用户管理（最后一个 admin 保护）、API key（创建只回一次、撤销后 authenticate 失败）、作用域隔离（两个组织互相看不到项目 / 任务 / 搜索 / BQL / 筛选器 / 导出）。
+- eunit `bosun_auth_tests`：注册流程（验证码限流 / 错码 / 过期）、登录、改密、用户管理（最后一个 admin 保护）、API key（创建只回一次、轮换保留配置、旧秘密值失效、撤销后 authenticate 失败）、作用域隔离（两个组织互相看不到项目 / 任务 / 搜索 / BQL / 筛选器 / 导出）。
 - eunit `bosun_mcp_tests`：带作用域调用工具；`whoami` 带 user。
 - ct `bosun_web_SUITE`：`init_per_testcase` 注册组织 + 登录拿 cookie；所有请求带 cookie；新增 `auth_flow`（401 / 403 / 注册 / 登录 / 登出 / key）与 `org_isolation`；MCP 端到端改用 Bearer key，并断言无 key 401。
 - vitest：登录页表单校验、AuthGate 跳转。

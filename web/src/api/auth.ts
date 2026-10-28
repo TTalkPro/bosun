@@ -39,7 +39,12 @@ export interface ApiKey {
   name: string;
   /** 展示用前缀 bsk_xxxxxx */
   prefix: string;
+  scopes: string[] | null;
+  /** 项目白名单；null / 空数组表示组织内全部项目 */
+  project_keys: string[] | null;
+  expires_at: string | null;
   created_at: string;
+  rotated_at: string | null;
   last_used_at: string | null;
   revoked_at: string | null;
   status: 'active' | 'revoked';
@@ -47,6 +52,16 @@ export interface ApiKey {
 
 /** 新建 key 的返回：`key` 是明文，只此一次 */
 export interface CreatedApiKey extends ApiKey { key: string }
+
+export interface ApiKeyInput {
+  name: string;
+  /** read / write / manage；不传默认 read */
+  scopes: string[];
+  /** 不传或空数组表示组织内全部项目 */
+  project_keys?: string[];
+  /** 未来 Unix 毫秒时间戳；不传表示不过期 */
+  expires_at?: number;
+}
 
 export interface CodeSent {
   email: string;
@@ -115,8 +130,13 @@ export const updateUser = async (id: string, input: Partial<{ name: string; role
 // 自己的 API key
 const KEYS = '/keys';
 export const useKeys = () => useSWR<{ keys: ApiKey[] }>(KEYS, fetcher);
-export const createKey = async (name: string) => {
-  const { data } = await client.post<CreatedApiKey>(KEYS, { name });
+export const createKey = async (input: ApiKeyInput) => {
+  const { data } = await client.post<CreatedApiKey>(KEYS, input);
+  await mutate(KEYS);
+  return data;
+};
+export const rotateKey = async (id: string) => {
+  const { data } = await client.post<CreatedApiKey>(`${KEYS}/${id}/rotate`);
   await mutate(KEYS);
   return data;
 };

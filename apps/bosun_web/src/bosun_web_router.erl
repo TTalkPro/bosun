@@ -23,6 +23,7 @@ dispatch() ->
             {"/api/v1/users/:id",                bosun_web_users_h,    Admin},
             {"/api/v1/keys",                     bosun_web_keys_h,     #{}},
             {"/api/v1/keys/:id",                 bosun_web_keys_h,     #{}},
+            {"/api/v1/keys/:id/rotate",          bosun_web_keys_h,     #{}},
             {"/api/v1/projects",                 bosun_web_projects_h, #{}},
             {"/api/v1/projects/:key",            bosun_web_projects_h, #{}},
             {"/api/v1/projects/:key/tasks",      bosun_web_tasks_h,    #{mode => project_tasks}},

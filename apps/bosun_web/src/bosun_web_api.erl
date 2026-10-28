@@ -95,11 +95,18 @@ error_to_http({cycle, Path}) ->
     {409, #{<<"error">> => <<"cycle">>,
             <<"message">> => bosun_mcp:error_to_text({cycle, Path}),
             <<"detail">> => #{<<"path">> => Path}}};
+error_to_http(epic_children_incomplete) ->
+    {409, #{<<"error">> => <<"epic_children_incomplete">>,
+            <<"message">> => bosun_mcp:error_to_text(epic_children_incomplete)}};
 %% 认证（13）
 error_to_http(unauthorized) ->
     {401, #{<<"error">> => <<"unauthorized">>, <<"message">> => <<"authentication required">>}};
 error_to_http(forbidden_role) ->
     {403, #{<<"error">> => <<"forbidden">>, <<"message">> => <<"organization admin only">>}};
+error_to_http({forbidden_scope, What}) ->
+    {403, #{<<"error">> => <<"forbidden_scope">>, <<"message">> => <<"missing required scope: ", What/binary>>}};
+error_to_http(forbidden_actor_override) ->
+    {403, #{<<"error">> => <<"forbidden_actor_override">>, <<"message">> => <<"this API key cannot override actor or author">>}};
 error_to_http(invalid_credentials) ->
     {401, #{<<"error">> => <<"invalid_credentials">>, <<"message">> => <<"wrong email or password">>}};
 error_to_http(user_disabled) ->

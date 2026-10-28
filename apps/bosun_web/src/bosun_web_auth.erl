@@ -26,8 +26,12 @@ execute(Req, #{handler_opts := Opts} = Env) ->
                     {stop, reply_error(Req, forbidden_role)};
                 {ok, P} ->
                     ok = bosun_scope:set(P),
-                    Mode =:= api_key andalso bind_mcp_session(Req, P),
-                    {ok, Req#{bosun_principal => P}, Env};
+                    case authorize_scope(Req, P) of
+                        ok ->
+                            Mode =:= api_key andalso bind_mcp_session(Req, P),
+                            {ok, Req#{bosun_principal => P}, Env};
+                        {error, Scope} -> {stop, reply_error(Req, {forbidden_scope, Scope})}
+                    end;
                 {error, Reason} ->
                     {stop, reply_unauthorized(Req, Mode, Reason)}
             end
@@ -78,6 +82,41 @@ session_token(Req) ->
     catch
         _:_ -> undefined
     end.
+
+%% Bearer key 和 MCP 用同一套权限模型；Cookie 会话主体没有 key scopes，不受限。
+authorize_scope(Req, #{via := api_key}) ->
+    Scope = required_scope(cowboy_req:method(Req), path_segments(Req)),
+    case Scope =:= none orelse bosun_scope:has_scope(Scope) of
+        true -> ok;
+        false -> {error, Scope}
+    end;
+authorize_scope(_, _) -> ok.
+
+path_segments(Req) ->
+    binary:split(cowboy_req:path(Req), <<"/">>, [global]).
+
+%% 只拦写接口；读接口继续靠 bosun_scope 的组织 / 项目隔离。
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"keys">>]) -> <<"manage">>;
+required_scope(<<"DELETE">>, [_, <<"api">>, <<"v1">>, <<"keys">>, _]) -> <<"manage">>;
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"keys">>, _, <<"rotate">>]) -> <<"manage">>;
+required_scope(<<"PATCH">>,  [_, <<"api">>, <<"v1">>, <<"org">>]) -> <<"manage">>;
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"users">>]) -> <<"manage">>;
+required_scope(<<"PATCH">>,  [_, <<"api">>, <<"v1">>, <<"users">>, _]) -> <<"manage">>;
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"projects">>]) -> <<"manage">>;
+required_scope(<<"PATCH">>,  [_, <<"api">>, <<"v1">>, <<"projects">>, _]) -> <<"manage">>;
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"projects">>, _, <<"tasks">>]) -> <<"write">>;
+required_scope(<<"PATCH">>,  [_, <<"api">>, <<"v1">>, <<"tasks">>, _]) -> <<"write">>;
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"tasks">>, _, <<"transition">>]) -> <<"write">>;
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"tasks">>, _, <<"links">>]) -> <<"write">>;
+required_scope(<<"DELETE">>, [_, <<"api">>, <<"v1">>, <<"tasks">>, _, <<"links">>, _, _]) -> <<"write">>;
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"tasks">>, _, <<"feedback">>]) -> <<"write">>;
+required_scope(<<"PATCH">>,  [_, <<"api">>, <<"v1">>, <<"tasks">>, _, <<"feedback">>, _]) -> <<"write">>;
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"filters">>]) -> <<"manage">>;
+required_scope(<<"PATCH">>,  [_, <<"api">>, <<"v1">>, <<"filters">>, _]) -> <<"manage">>;
+required_scope(<<"DELETE">>, [_, <<"api">>, <<"v1">>, <<"filters">>, _]) -> <<"manage">>;
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"import">>]) -> <<"manage">>;
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"auth">>, <<"password">>]) -> <<"manage">>;
+required_scope(_, _) -> none.
 
 %% MCP 工具在会话进程里执行；把主体绑到那个进程，工具调用前从它取作用域
 bind_mcp_session(Req, P) ->

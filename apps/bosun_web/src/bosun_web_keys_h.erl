@@ -16,13 +16,21 @@ handle(<<"GET">>, undefined, Uid, Req) ->
     {ok, Ks} = bosun_api_key:list(Uid),
     reply(200, #{<<"keys">> => Ks}, Req);
 handle(<<"POST">>, undefined, Uid, Req) ->
-    with_body(Req, fun(Body, Req1) -> reply_result(201, bosun_api_key:create(Uid, maps:get(<<"name">>, Body, <<>>)), Req1) end);
+    with_body(Req, fun(Body, Req1) ->
+        Input = maps:with([<<"scopes">>, <<"project_keys">>, <<"expires_at">>], Body),
+        reply_result(201, bosun_api_key:create(Uid, maps:get(<<"name">>, Body, <<>>), Input), Req1)
+    end);
 handle(_, undefined, _, Req) ->
     method_not_allowed(Req, <<"GET, POST">>);
+handle(<<"POST">>, Id, Uid, Req) ->
+    case bosun_api_key:rotate(Uid, Id) of
+        {ok, _} = OK -> reply_result(201, OK, Req);
+        {error, R} -> reply_error(Req, R)
+    end;
 handle(<<"DELETE">>, Id, Uid, Req) ->
     case bosun_api_key:revoke(Uid, Id) of
         {ok, _} -> cowboy_req:reply(204, #{}, <<>>, Req);
         {error, R} -> reply_error(Req, R)
     end;
 handle(_, _, _, Req) ->
-    method_not_allowed(Req, <<"DELETE">>).
+    method_not_allowed(Req, <<"GET, POST, DELETE">>).

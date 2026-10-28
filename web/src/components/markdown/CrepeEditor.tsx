@@ -3,70 +3,16 @@ import { Crepe } from '@milkdown/crepe';
 import { editorViewCtx } from '@milkdown/kit/core';
 import { Selection } from '@milkdown/kit/prose/state';
 import { languages } from '@codemirror/language-data';
-import { Box, styled } from '@mui/material';
 import '@milkdown/crepe/theme/common/style.css';
 import { MarkdownBody } from './markdownStyles';
 import { renderMermaidElement } from './mermaid';
 import { cmTheme } from './cmTheme';
 import { useEffectiveMode } from './useEffectiveMode';
 
-// Crepe 的所有配色都走 --crepe-* 变量：这里用 MUI palette 赋值，明暗模式自动跟随
-const EditorFrame = styled(Box, { shouldForwardProp: (p) => p !== 'minHeight' && p !== 'compact' && p !== 'fill' })<{ minHeight: number; compact: boolean; fill: boolean }>(
-  ({ theme, minHeight, compact, fill }) => {
-    const p = theme.vars!.palette;
-    return {
-      border: `1px solid ${p.divider}`,
-      borderRadius: theme.shape.borderRadius,
-      backgroundColor: p.background.paper,
-      '&:focus-within': { borderColor: p.primary.main, boxShadow: `0 0 0 2px rgba(${p.primary.mainChannel} / 0.2)` },
-      '& .milkdown': {
-        '--crepe-color-background': p.background.paper,
-        '--crepe-color-on-background': p.text.primary,
-        '--crepe-color-surface': `rgba(${p.text.primaryChannel} / 0.05)`,
-        '--crepe-color-surface-low': `rgba(${p.text.primaryChannel} / 0.08)`,
-        '--crepe-color-on-surface': p.text.primary,
-        '--crepe-color-on-surface-variant': p.text.secondary,
-        '--crepe-color-outline': p.text.disabled,
-        '--crepe-color-primary': p.primary.main,
-        '--crepe-color-secondary': `rgba(${p.primary.mainChannel} / 0.16)`,
-        '--crepe-color-on-secondary': p.text.primary,
-        '--crepe-color-inverse': p.text.primary,
-        '--crepe-color-on-inverse': p.background.paper,
-        '--crepe-color-inline-code': p.error.main,
-        '--crepe-color-error': p.error.main,
-        '--crepe-color-hover': `rgba(${p.text.primaryChannel} / 0.06)`,
-        '--crepe-color-selected': `rgba(${p.primary.mainChannel} / 0.14)`,
-        '--crepe-color-inline-area': `rgba(${p.text.primaryChannel} / 0.08)`,
-        '--crepe-base-font-size': '15px',
-        '--crepe-font-title': theme.typography.fontFamily,
-        '--crepe-font-default': theme.typography.fontFamily,
-        '--crepe-font-code': '"JetBrains Mono", "Fira Code", Menlo, Consolas, monospace',
-        '--crepe-shadow-1': theme.shadows[2],
-        '--crepe-shadow-2': theme.shadows[4],
-        background: 'transparent',
-        color: p.text.primary,
-      },
-      // 非紧凑模式左侧留 72px：Crepe 的块拖拽手柄（66px 宽）绝对定位在块的左边，
-      // 需要这段内边距才不会画到编辑框外面
-      '& .milkdown .ProseMirror': {
-        padding: compact ? '8px 12px' : '12px 24px 12px 72px',
-        minHeight,
-        outline: 'none',
-      },
-      // 填满父容器（弹窗）：内容多了在框内滚动
-      ...(fill
-        ? {
-            height: '100%',
-            overflowY: 'auto',
-            '& > *, & .milkdown': { minHeight: '100%', boxSizing: 'border-box' },
-          }
-        : {}),
-      '& .milkdown .ProseMirror > *': { marginLeft: 0, marginRight: 0 },
-      // 紧凑模式（打回 / 拒绝弹窗）不显示拖拽手柄
-      ...(compact ? { '& .milkdown-block-handle': { display: 'none' } } : {}),
-      '& .milkdown .bosun-mermaid svg': { maxWidth: '100%', height: 'auto' },
-    };
-  },
+const EditorFrame = ({ className, children, fill }: React.ComponentProps<'div'> & { minHeight: number; compact: boolean; fill: boolean }) => (
+  <div className={className} style={{ display: 'flex', flexDirection: 'column', ...(fill ? { height: '100%', overflowY: 'auto' } : {}) }}>
+    {children}
+  </div>
 );
 
 export interface MarkdownEditorProps {
@@ -140,9 +86,7 @@ const CrepeEditor = ({ value, onChange, placeholder = '写点什么…支持 Mar
   }, []);
 
   return (
-    <EditorFrame minHeight={minHeight} compact={compact} fill={fill}>
-      <MarkdownBody ref={rootRef} />
-    </EditorFrame>
+    <EditorFrame className="rounded-[10px] border bg-card px-0 py-0 transition focus-within:border-primary focus-within:shadow-[0_0_0_2px_color-mix(in_oklab,var(--primary)_20%,transparent)]" minHeight={minHeight} compact={compact} fill={fill}><MarkdownBody className="[&_.milkdown]:[--crepe-color-background:var(--card)] [&_.milkdown]:text-foreground" ref={rootRef} /></EditorFrame>
   );
 };
 

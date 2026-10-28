@@ -210,11 +210,23 @@ children(EpicId) ->
 -spec progress(binary()) -> map().
 progress(EpicId) ->
     Kids = children(EpicId),
+    Total = length(Kids),
+    Done = length([1 || #task{status = S} <- Kids, S =:= done orelse S =:= verified]),
+    Cancelled = length([1 || #task{status = S} <- Kids, S =:= cancelled]),
+    ActiveTotal = Total - Cancelled,
+    Percent = case ActiveTotal of
+                  0 when Total > 0 -> 100;
+                  0 -> 0;
+                  _ -> Done * 100 div ActiveTotal
+              end,
     ByStatus = lists:foldl(fun(#task{status = S}, Acc) ->
                                maps:update_with(bosun_task_status:to_binary(S), fun(N) -> N + 1 end, 1, Acc)
                            end, #{}, Kids),
-    #{<<"total">> => length(Kids),
-      <<"done">> => length([1 || #task{status = S} <- Kids, S =:= done orelse S =:= verified]),
+    #{<<"total">> => Total,
+      <<"done">> => Done,
+      <<"cancelled">> => Cancelled,
+      <<"active_total">> => ActiveTotal,
+      <<"percent">> => Percent,
       <<"by_status">> => ByStatus}.
 
 %% @doc 批量读摘要；非法或不存在的 ID 静默跳过。

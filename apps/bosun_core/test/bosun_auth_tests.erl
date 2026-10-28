@@ -16,6 +16,7 @@ auth_test_() ->
         {"user management", fun user_management/0},
         {"sessions", fun sessions/0},
         {"api keys", fun api_keys/0},
+        {"api key scopes", fun api_key_scopes/0},
         {"org isolation", fun org_isolation/0},
         {"backup scoped", fun backup_scoped/0},
         {"adopt orphans", fun adopt_orphans/0}
@@ -134,7 +135,8 @@ sessions() ->
 
 api_keys() ->
     {_, #{<<"id">> := Uid}} = register(<<"Acme">>, <<"admin@acme.io">>, <<"Alice">>),
-    {ok, #{<<"key">> := Plain, <<"id">> := Kid, <<"prefix">> := Prefix, <<"status">> := <<"active">>, <<"name">> := <<"laptop">>}} =
+    {ok, #{<<"key">> := Plain, <<"id">> := Kid, <<"prefix">> := Prefix, <<"created_at">> := CreatedAt,
+           <<"status">> := <<"active">>, <<"name">> := <<"laptop">>}} =
         bosun_api_key:create(Uid, <<"laptop">>),
     ?assertMatch(<<"bsk_", _/binary>>, Plain),
     ?assertEqual(44, byte_size(Plain)),
@@ -147,12 +149,48 @@ api_keys() ->
     ?assertEqual({error, unauthorized}, bosun_api_key:authenticate(undefined)),
     {ok, [#{<<"last_used_at">> := Used}]} = bosun_api_key:list(Uid),
     ?assert(is_binary(Used)),
+    {ok, #{<<"key">> := NewPlain, <<"id">> := Kid, <<"prefix">> := NewPrefix, <<"created_at">> := CreatedAt,
+           <<"scopes">> := [<<"read">>], <<"name">> := <<"laptop">>, <<"status">> := <<"active">>}} =
+        bosun_api_key:rotate(Uid, Kid),
+    ?assertMatch(<<"bsk_", _/binary>>, NewPlain),
+    ?assertNotEqual(Plain, NewPlain),
+    ?assertNotEqual(Prefix, NewPrefix),
+    {ok, [#{<<"rotated_at">> := Rotated, <<"last_used_at">> := undefined}]} = bosun_api_key:list(Uid),
+    ?assert(is_binary(Rotated)),
+    {ok, #{key_id := Kid}} = bosun_api_key:authenticate(NewPlain),
+    ?assertEqual({error, unauthorized}, bosun_api_key:authenticate(Plain)),
+    ?assertEqual({error, not_found}, bosun_api_key:rotate(<<"u999">>, Kid)),
     ?assertEqual({error, not_found}, bosun_api_key:revoke(<<"u999">>, Kid)),
     {ok, #{<<"status">> := <<"revoked">>}} = bosun_api_key:revoke(Uid, Kid),
     {ok, #{<<"status">> := <<"revoked">>}} = bosun_api_key:revoke(Uid, Kid),
     ?assertEqual({error, unauthorized}, bosun_api_key:authenticate(Plain)),
+    ?assertEqual({error, not_found}, bosun_api_key:rotate(Uid, Kid)),
     ?assertEqual({error, not_found}, bosun_api_key:create(<<"u999">>, <<"x">>)),
     {ok, #{<<"name">> := <<"default">>}} = bosun_api_key:create(Uid, <<>>).
+
+api_key_scopes() ->
+    {_, #{<<"id">> := Uid}} = register(<<"Acme">>, <<"admin@acme.io">>, <<"Alice">>),
+    {ok, #{<<"key">> := Plain, <<"scopes">> := [<<"read">>], <<"project_keys">> := [<<"ONE">>]}} =
+        bosun_api_key:create(Uid, <<"readonly">>, #{<<"scopes">> => [<<"read">>],
+                                                    <<"project_keys">> => [<<"one">>]}),
+    {ok, P} = bosun_api_key:authenticate(Plain),
+    ?assertEqual([<<"read">>], maps:get(scopes, P)),
+    ?assertEqual([<<"ONE">>], maps:get(project_keys, P)),
+    ok = bosun_scope:with(P, fun() ->
+        ?assertEqual(true, bosun_scope:has_scope(<<"read">>)),
+        ?assertEqual(false, bosun_scope:has_scope(<<"write">>)),
+        {ok, _} = bosun_project:create(#{<<"key">> => <<"ONE">>, <<"name">> => <<"allowed">>}),
+        {ok, _} = bosun_project:create(#{<<"key">> => <<"TWO">>, <<"name">> => <<"hidden">>}),
+        ?assertEqual(true, bosun_scope:project_visible(<<"one">>)),
+        ?assertEqual(false, bosun_scope:project_visible(<<"TWO">>)),
+        ?assertEqual({error, {project, not_found}}, bosun_task:list(<<"TWO">>, #{}))
+    end),
+    ?assertMatch({error, {invalid, scopes, _}},
+                 bosun_api_key:create(Uid, <<"bad">>, #{<<"scopes">> => [<<"god">>]})),
+    ?assertMatch({error, {invalid, project_keys, _}},
+                 bosun_api_key:create(Uid, <<"bad">>, #{<<"project_keys">> => [<<"bad key">>]})),
+    ?assertMatch({error, {invalid, expires_at, _}},
+                 bosun_api_key:create(Uid, <<"bad">>, #{<<"expires_at">> => 1})).
 
 org_isolation() ->
     {_, A} = register(<<"Acme">>, <<"admin@acme.io">>, <<"Alice">>),
