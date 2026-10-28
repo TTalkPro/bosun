@@ -1,25 +1,21 @@
-import { type ReactElement, useState } from 'react';
-import { Box, Button, Card, CardContent, Collapse, Link, Stack, Typography } from '@mui/material';
-import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
-import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
-import RateReviewOutlinedIcon from '@mui/icons-material/RateReviewOutlined';
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import QuestionAnswerOutlinedIcon from '@mui/icons-material/QuestionAnswerOutlined';
-import HistoryIcon from '@mui/icons-material/History';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import { useState, type ReactNode } from 'react';
+import { MessageCircle, ChevronDown, CircleHelp, History, MessageSquareText, Pencil, CircleCheck } from 'lucide-react';
 import type { Feedback, FeedbackKind } from '@/api/types';
 import MarkdownView from '@/components/markdown/MarkdownView';
 import RelativeTime from '@/components/RelativeTime';
 import SoftChip from '@/components/SoftChip';
 import { ActorAvatar } from '@/components/ActorChip';
 import { useMe } from '@/api/auth';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
 import { KIND_LABEL } from './kinds';
 
-const ICON: Record<FeedbackKind, ReactElement> = {
-  comment: <ChatBubbleOutlineIcon />,
-  review: <RateReviewOutlinedIcon />,
-  question: <HelpOutlineIcon />,
-  answer: <QuestionAnswerOutlinedIcon />,
+const ICON: Record<FeedbackKind, ReactNode> = {
+  comment: <MessageCircle />,
+  review: <MessageSquareText />,
+  question: <CircleHelp />,
+  answer: <CircleCheck />,
 };
 
 const KIND_TONE: Record<FeedbackKind, 'default' | 'secondary' | 'warning' | 'success'> = {
@@ -31,32 +27,30 @@ const KIND_TONE: Record<FeedbackKind, 'default' | 'secondary' | 'warning' | 'suc
 
 
 const short = (id: string) => `#${id.split('#')[1] ?? id}`;
-const MONO = '"JetBrains Mono", Menlo, Consolas, monospace';
-
 const Header = ({ f, open, onEdit, dimmed }: { f: Feedback; open: boolean; onEdit?: (f: Feedback) => void; dimmed?: boolean }) => {
   // 只有当前身份写的条目能修订（后端也会按 author 校验）
   const me = useMe().data?.user.name;
   return (
-  <Stack direction="row" alignItems="center" sx={{ minHeight: 28, opacity: dimmed ? 0.6 : 1 }} useFlexGap flexWrap="wrap" rowGap={0.5}>
-    <Stack direction="row" alignItems="center" spacing={1} sx={{ mr: 'auto' }}>
+  <div className={cn('flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1.5', dimmed && 'opacity-60')}>
+    <div className="mr-auto flex flex-wrap items-center gap-2">
       <ActorAvatar name={f.author} />
-      <Typography variant="subtitle2" sx={{ lineHeight: 1 }}>{f.author}</Typography>
+      <span className="text-sm font-semibold leading-none">{f.author}</span>
       <SoftChip icon={ICON[f.kind]} label={KIND_LABEL[f.kind]} tone={KIND_TONE[f.kind]} />
-      {open && <SoftChip label="待回答" tone="warning" sx={{ fontWeight: 700 }} />}
+      {open && <SoftChip label="待回答" tone="warning" className="font-bold" />}
       {f.supersedes && (
-        <Typography variant="caption" color="text.secondary" component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-          <HistoryIcon sx={{ fontSize: 14 }} /> 修订自 <Link href={`#fb-${f.supersedes}`} underline="hover" sx={{ fontFamily: MONO }}>{short(f.supersedes)}</Link>
-        </Typography>
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+          <History className="size-3.5" /> 修订自 <a className="font-mono hover:underline" href={`#fb-${f.supersedes}`}>{short(f.supersedes)}</a>
+        </span>
       )}
-    </Stack>
-    <Stack direction="row" alignItems="center" spacing={1.5}>
-      <Typography variant="caption" color="text.secondary" sx={{ fontFamily: MONO, lineHeight: 1 }}>{f.id}</Typography>
-      <RelativeTime value={f.created_at} sx={{ lineHeight: 1 }} />
+    </div>
+    <div className="flex flex-wrap items-center gap-3">
+      <span className="font-mono text-xs leading-none text-muted-foreground">{f.id}</span>
+      <RelativeTime value={f.created_at} className="leading-none" />
       {f.status === 'active' && f.author === me && onEdit && (
-        <Button size="small" startIcon={<EditOutlinedIcon />} onClick={() => onEdit(f)} sx={{ py: 0, minHeight: 24 }}>修订</Button>
+        <Button variant="ghost" size="sm" className="h-6 px-2 py-0" onClick={() => onEdit(f)}><Pencil />修订</Button>
       )}
-    </Stack>
-  </Stack>
+    </div>
+  </div>
   );
 };
 
@@ -64,21 +58,21 @@ const Header = ({ f, open, onEdit, dimmed }: { f: Feedback; open: boolean; onEdi
 const SupersededCard = ({ f }: { f: Feedback }) => {
   const [expanded, setExpanded] = useState(false);
   return (
-    <Card id={`fb-${f.id}`} variant="outlined" sx={{ borderStyle: 'dashed', bgcolor: 'transparent' }}>
-      <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ cursor: 'pointer', color: 'text.secondary' }} onClick={() => setExpanded((v) => !v)}>
-          <ExpandMoreIcon fontSize="small" sx={{ transform: expanded ? 'rotate(0)' : 'rotate(-90deg)', transition: 'transform .2s' }} />
+    <Card id={`fb-${f.id}`} className="gap-0 border-dashed bg-transparent p-3 py-3">
+      <CardContent className="p-0">
+        <div className="flex min-w-0 cursor-pointer items-center gap-2 text-muted-foreground" onClick={() => setExpanded((v) => !v)}>
+          <ChevronDown className={cn('size-4 shrink-0 transition-transform', !expanded && '-rotate-90')} />
           <SoftChip label="作废" tone="default" />
-          <Typography variant="caption" sx={{ fontFamily: MONO }}>{f.id}</Typography>
-          <Typography variant="caption" noWrap sx={{ flex: 1, minWidth: 0, textDecoration: 'line-through' }}>{f.content.replace(/\s+/g, ' ').slice(0, 80)}</Typography>
-          <Typography variant="caption">已被 <Link href={`#fb-${f.superseded_by}`} underline="hover" sx={{ fontFamily: MONO }} onClick={(e) => e.stopPropagation()}>{short(f.superseded_by!)}</Link> 替代</Typography>
-        </Stack>
-        <Collapse in={expanded}>
-          <Box sx={{ mt: 1, pl: 3.5, opacity: 0.7 }}>
+          <span className="font-mono text-xs">{f.id}</span>
+          <span className="min-w-0 flex-1 truncate text-xs line-through">{f.content.replace(/\s+/g, ' ').slice(0, 80)}</span>
+          <span className="text-xs">已被 <a className="font-mono hover:underline" href={`#fb-${f.superseded_by}`} onClick={(e) => e.stopPropagation()}>{short(f.superseded_by!)}</a> 替代</span>
+        </div>
+        {expanded && (
+          <div className="mt-2 pl-4 opacity-70">
             <Header f={f} open={false} dimmed />
-            <Box sx={{ mt: 1 }}><MarkdownView markdown={f.content} /></Box>
-          </Box>
-        </Collapse>
+            <div className="mt-2"><MarkdownView markdown={f.content} /></div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -87,14 +81,10 @@ const SupersededCard = ({ f }: { f: Feedback }) => {
 const FeedbackCard = ({ f, open, onEdit }: { f: Feedback; open: boolean; onEdit?: (f: Feedback) => void }) => (
   <Card
     id={`fb-${f.id}`}
-    variant="outlined"
-    sx={{
-      bgcolor: open ? 'rgba(255, 193, 7, 0.08)' : undefined,
-      borderColor: open ? 'warning.main' : undefined,
-    }}
+    className={cn('gap-0 border p-3 py-3', open && 'border-amber-500/60 bg-amber-500/8')}
   >
-    <CardContent sx={{ '&:last-child': { pb: 2 } }}>
-      <Box sx={{ mb: 1.25 }}><Header f={f} open={open} onEdit={onEdit} /></Box>
+    <CardContent className="p-0">
+      <div className="mb-2"><Header f={f} open={open} onEdit={onEdit} /></div>
       <MarkdownView markdown={f.content} />
     </CardContent>
   </Card>
@@ -102,18 +92,18 @@ const FeedbackCard = ({ f, open, onEdit }: { f: Feedback; open: boolean; onEdit?
 
 const FeedbackList = ({ feedback, onEdit }: { feedback: Feedback[]; onEdit?: (f: Feedback) => void }) => {
   if (!feedback.length) {
-    return <Typography variant="body2" color="text.disabled">还没有 Feedback</Typography>;
+    return <p className="text-sm text-muted-foreground/70">还没有 Feedback</p>;
   }
   const active = feedback.filter((f) => f.status === 'active');
   const last = active[active.length - 1];
   return (
-    <Stack spacing={1.5}>
+    <div className="space-y-3">
       {feedback.map((f) =>
         f.status === 'superseded'
           ? <SupersededCard key={f.id} f={f} />
           : <FeedbackCard key={f.id} f={f} open={f === last && f.kind === 'question'} onEdit={onEdit} />,
       )}
-    </Stack>
+    </div>
   );
 };
 
