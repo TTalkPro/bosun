@@ -1,7 +1,5 @@
 import { useState } from 'react';
-import { Box, Button, Card, CardContent, Chip, IconButton, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
-import EditIcon from '@mui/icons-material/EditOutlined';
+import { Pencil, Plus } from 'lucide-react';
 import { useSnackbar } from 'notistack';
 import { Navigate } from 'react-router';
 import { updateOrg, useMe, useUsers, type User } from '@/api/auth';
@@ -9,6 +7,12 @@ import { ActorAvatar } from '@/components/ActorChip';
 import RelativeTime from '@/components/RelativeTime';
 import SoftChip from '@/components/SoftChip';
 import { useApiError } from '@/components/useApiError';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import UserFormPanel from '@/features/org/UserFormPanel';
 import { paths } from '@/routes/paths';
 
@@ -35,47 +39,55 @@ const OrgPage = () => {
   };
 
   return (
-    <Box>
-      <Typography variant="h4" sx={{ mb: 3 }}>组织</Typography>
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardContent>
-          <Stack direction="row" spacing={2} alignItems="center" useFlexGap flexWrap="wrap">
-            <TextField label="组织名" value={nameValue} onChange={(e) => setOrgName(e.target.value)} size="small" sx={{ minWidth: 260 }} onKeyDown={(e) => { if (e.key === 'Enter') saveOrg(); }} />
-            <Button variant="outlined" onClick={saveOrg} disabled={busy || orgName === null || !nameValue.trim()}>保存</Button>
-            <Typography variant="body2" color="text.secondary">id {me.org.id} · 创建于 <RelativeTime value={me.org.created_at} /></Typography>
-          </Stack>
+    <div>
+      <h1 className="mb-6 text-3xl font-bold tracking-tight">组织</h1>
+      <Card className="mb-6 gap-2 border py-4">
+        <CardContent className="px-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="min-w-64">
+              <label htmlFor="org-name" className="mb-1 block text-sm font-medium">组织名</label>
+              <Input id="org-name" value={nameValue} onChange={(e) => setOrgName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveOrg(); }} />
+            </div>
+            <Button variant="outline" className="self-end" onClick={saveOrg} disabled={busy || orgName === null || !nameValue.trim()}>保存</Button>
+            <p className="text-sm text-muted-foreground">id {me.org.id} · 创建于 <RelativeTime value={me.org.created_at} /></p>
+          </div>
         </CardContent>
       </Card>
 
-      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 1.5 }}>
-        <Typography variant="h6">用户</Typography>
-        <Chip size="small" label={users.length} />
-        <Box sx={{ flex: 1 }} />
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreating(true)}>新建用户</Button>
-      </Stack>
-      <Card variant="outlined">
-        <Box sx={{ overflowX: 'auto' }}>
-          <Table size="small">
-            <TableHead><TableRow><TableCell>用户</TableCell><TableCell>邮箱</TableCell><TableCell>角色</TableCell><TableCell>状态</TableCell><TableCell>最近登录</TableCell><TableCell align="right" /></TableRow></TableHead>
+      <div className="mb-2 flex items-center gap-3">
+        <h2 className="text-lg font-semibold">用户</h2>
+        <Badge variant="secondary">{users.length}</Badge>
+        <div className="flex-1" />
+        <Button onClick={() => setCreating(true)}><Plus />新建用户</Button>
+      </div>
+      <Card className="gap-0 border py-0">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader><TableRow><TableHead>用户</TableHead><TableHead>邮箱</TableHead><TableHead>角色</TableHead><TableHead>状态</TableHead><TableHead>最近登录</TableHead><TableHead className="text-right" /></TableRow></TableHeader>
             <TableBody>
               {users.map((u) => (
-                <TableRow key={u.id} sx={{ opacity: u.status === 'disabled' ? 0.5 : 1 }}>
-                  <TableCell><Stack direction="row" spacing={1} alignItems="center"><ActorAvatar name={u.name} kind="human" size={24} /><span>{u.name}</span>{u.id === me.user.id && <Typography variant="caption" color="text.secondary">（我）</Typography>}</Stack></TableCell>
+                <TableRow key={u.id} className={u.status === 'disabled' ? 'opacity-50' : undefined}>
+                  <TableCell><div className="flex items-center gap-2"><ActorAvatar name={u.name} kind="human" size={24} /><span>{u.name}</span>{u.id === me.user.id && <span className="text-xs text-muted-foreground">（我）</span>}</div></TableCell>
                   <TableCell>{u.email}</TableCell>
                   <TableCell><SoftChip label={u.role === 'admin' ? '管理员' : '成员'} tone={u.role === 'admin' ? 'primary' : 'default'} /></TableCell>
-                  <TableCell>{u.status === 'active' ? <Chip size="small" color="success" variant="outlined" label="启用" /> : <Chip size="small" variant="outlined" label="已停用" />}</TableCell>
-                  <TableCell>{u.last_login_at ? <RelativeTime value={u.last_login_at} /> : <Typography variant="caption" color="text.secondary">从未</Typography>}</TableCell>
-                  <TableCell align="right"><Tooltip title="编辑"><IconButton size="small" onClick={() => setEditing(u)}><EditIcon fontSize="small" /></IconButton></Tooltip></TableCell>
+                  <TableCell>{u.status === 'active' ? <Badge variant="outline" className="border-emerald-600 text-emerald-700 dark:text-emerald-400">启用</Badge> : <Badge variant="outline">已停用</Badge>}</TableCell>
+                  <TableCell>{u.last_login_at ? <RelativeTime value={u.last_login_at} /> : <span className="text-xs text-muted-foreground">从未</span>}</TableCell>
+                  <TableCell className="text-right">
+                    <Tooltip>
+                      <TooltipTrigger asChild><Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(u)} aria-label="编辑"><Pencil className="size-4" /></Button></TooltipTrigger>
+                      <TooltipContent>编辑</TooltipContent>
+                    </Tooltip>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-        </Box>
+        </div>
       </Card>
 
       {creating && <UserFormPanel onClose={() => setCreating(false)} />}
       {editing && <UserFormPanel user={editing} onClose={() => setEditing(null)} />}
-    </Box>
+    </div>
   );
 };
 
