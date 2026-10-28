@@ -35,7 +35,7 @@ type_to_binary(T) -> atom_to_binary(T, utf8).
 -spec add(term(), term(), term(), map()) -> {ok, map()} | {error, term()}.
 add(From0, To0, Type0, Opts) ->
     case {bosun_id:parse_task_id(From0), bosun_id:parse_task_id(To0), parse_type(Type0)} of
-        {{ok, From, _, _}, {ok, To, _, _}, {ok, Type}} when From =:= To ->
+        {{ok, From, _, _}, {ok, To, _, _}, {ok, _Type}} when From =:= To ->
             {error, {invalid, to, <<"a task cannot be linked to itself">>}};
         {{ok, From, _, _}, {ok, To, _, _}, {ok, Type}} ->
             Actor = case bosun_util:get_bin(actor, Opts, <<>>) of <<>> -> <<"user">>; A -> A end,

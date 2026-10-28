@@ -137,7 +137,6 @@ rest_chain(Config) ->
     ok.
 
 rest_errors(Config) ->
-    Base = ?config(base, Config),
     {400, #{<<"error">> := <<"invalid">>, <<"field">> := <<"key">>}} =
         req(post, Config, "/api/v1/projects", #{<<"key">> => <<"x">>, <<"name">> => <<"n">>}),
     {201, _} = req(post, Config, "/api/v1/projects", #{<<"key">> => <<"ERR">>, <<"name">> => <<"n">>}),
