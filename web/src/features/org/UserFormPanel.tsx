@@ -1,9 +1,13 @@
 import { useState } from 'react';
-import { Alert, Button, FormControlLabel, MenuItem, Stack, Switch, TextField } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import { createUser, updateUser, useMe, type Role, type User } from '@/api/auth';
 import SidePanel from '@/components/SidePanel';
 import { useApiError } from '@/components/useApiError';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -55,18 +59,54 @@ const UserFormPanel = ({ user, onClose }: Props) => {
 
   return (
     <SidePanel title={editing ? `编辑用户 ${user.name}` : '新建用户'} onClose={onClose} busy={busy}
-      actions={<><Button onClick={onClose} disabled={busy}>取消</Button><Button variant="contained" onClick={submit} disabled={busy}>{editing ? '保存' : '创建'}</Button></>}>
-      <Stack spacing={2}>
-        <TextField label="邮箱" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={editing} error={!!errors.email} helperText={errors.email ?? (editing ? '登录用，不可修改' : '登录用')} autoFocus={!editing} autoComplete="off" />
-        <TextField label="显示名" value={name} onChange={(e) => setName(e.target.value)} error={!!errors.name} helperText={errors.name ?? '任务历史 / Feedback 的署名，组织内唯一'} autoFocus={editing} />
-        <TextField select label="角色" value={role} onChange={(e) => setRole(e.target.value as Role)} error={!!errors.role} helperText={errors.role ?? (isSelf ? '不能把自己降级为成员，除非组织里还有别的管理员' : '管理员可以管用户、组织信息与导入导出')}>
-          <MenuItem value="member">成员</MenuItem>
-          <MenuItem value="admin">管理员</MenuItem>
-        </TextField>
-        <TextField label={editing ? '重置密码' : '初始密码'} type="password" value={password} onChange={(e) => setPassword(e.target.value)} error={!!errors.password} helperText={errors.password ?? (editing ? '留空不改；填了就重置为这个' : '至少 8 位，线下告诉对方，登录后可自行修改')} autoComplete="new-password" />
-        {editing && <FormControlLabel control={<Switch checked={active} onChange={(e) => setActive(e.target.checked)} />} label="启用（停用后不能登录，会话与 API key 立即失效）" />}
-        {!editing && <Alert severity="info">系统不发邀请邮件：创建后请把邮箱和初始密码告诉对方。</Alert>}
-      </Stack>
+      actions={<><Button variant="outline" onClick={onClose} disabled={busy}>取消</Button><Button onClick={submit} disabled={busy}>{editing ? '保存' : '创建'}</Button></>}>
+      <div className="space-y-4">
+        <div>
+          <Label htmlFor="user-email">邮箱</Label>
+          <Input id="user-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={editing} aria-invalid={!!errors.email} autoFocus={!editing} autoComplete="off" />
+          <p className={errors.email ? 'mt-1 text-xs text-destructive' : 'mt-1 text-xs text-muted-foreground'}>
+            {errors.email ?? (editing ? '登录用，不可修改' : '登录用')}
+          </p>
+        </div>
+        <div>
+          <Label htmlFor="user-name">显示名</Label>
+          <Input id="user-name" value={name} onChange={(e) => setName(e.target.value)} aria-invalid={!!errors.name} autoFocus={editing} />
+          <p className={errors.name ? 'mt-1 text-xs text-destructive' : 'mt-1 text-xs text-muted-foreground'}>
+            {errors.name ?? '任务历史 / Feedback 的署名，组织内唯一'}
+          </p>
+        </div>
+        <div>
+          <Label>角色</Label>
+          <Select value={role} onValueChange={(v) => setRole(v as Role)}>
+            <SelectTrigger aria-invalid={!!errors.role} className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="member">成员</SelectItem>
+              <SelectItem value="admin">管理员</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className={errors.role ? 'mt-1 text-xs text-destructive' : 'mt-1 text-xs text-muted-foreground'}>
+            {errors.role ?? (isSelf ? '不能把自己降级为成员，除非组织里还有别的管理员' : '管理员可以管用户、组织信息与导入导出')}
+          </p>
+        </div>
+        <div>
+          <Label htmlFor="user-password">{editing ? '重置密码' : '初始密码'}</Label>
+          <Input id="user-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} aria-invalid={!!errors.password} autoComplete="new-password" />
+          <p className={errors.password ? 'mt-1 text-xs text-destructive' : 'mt-1 text-xs text-muted-foreground'}>
+            {errors.password ?? (editing ? '留空不改；填了就重置为这个' : '至少 8 位，线下告诉对方，登录后可自行修改')}
+          </p>
+        </div>
+        {editing && (
+          <div className="flex items-center gap-2">
+            <Switch id="user-active" checked={active} onCheckedChange={setActive} />
+            <Label htmlFor="user-active">启用（停用后不能登录，会话与 API key 立即失效）</Label>
+          </div>
+        )}
+        {!editing && (
+          <div className="rounded-md border bg-muted/40 p-3 text-sm">
+            系统不发邀请邮件：创建后请把邮箱和初始密码告诉对方。
+          </div>
+        )}
+      </div>
     </SidePanel>
   );
 };
