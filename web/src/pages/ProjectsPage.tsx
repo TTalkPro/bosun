@@ -1,9 +1,14 @@
 import { useState } from 'react';
 import { Link as RouterLink } from 'react-router';
-import { Box, Button, Card, CardActionArea, CardContent, Chip, FormControlLabel, Grid, Skeleton, Stack, Switch, Typography } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
+import { Plus } from 'lucide-react';
 import { useProjects } from '@/api/projects';
 import RelativeTime from '@/components/RelativeTime';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import ProjectFormDialog from '@/features/projects/ProjectFormDialog';
 import { paths } from '@/routes/paths';
 
@@ -14,53 +19,55 @@ const ProjectsPage = () => {
   const projects = data?.projects ?? [];
 
   return (
-    <Box>
-      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 3 }} useFlexGap flexWrap="wrap">
-        <Typography variant="h4">项目</Typography>
-        <Box sx={{ flex: 1 }} />
-        <FormControlLabel control={<Switch size="small" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />} label="显示已归档" />
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreating(true)}>新建项目</Button>
-      </Stack>
+    <div>
+      <div className="mb-6 flex flex-wrap items-center gap-4">
+        <h1 className="text-3xl font-bold tracking-tight">项目</h1>
+        <div className="flex-1" />
+        <Label className="flex items-center gap-2 font-normal">
+          <Switch checked={showArchived} onCheckedChange={setShowArchived} />显示已归档
+        </Label>
+        <Button onClick={() => setCreating(true)}><Plus />新建项目</Button>
+      </div>
 
       {isLoading && (
-        <Grid container spacing={2}>
-          {[0, 1, 2].map((i) => <Grid key={i} size={{ xs: 12, sm: 6, md: 4 }}><Skeleton variant="rounded" height={120} /></Grid>)}
-        </Grid>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-30 w-full rounded-xl" />)}
+        </div>
       )}
 
       {!isLoading && projects.length === 0 && (
-        <Card variant="outlined"><CardContent>
-          <Typography color="text.secondary">还没有项目。点右上角「新建项目」，或让 Agent 通过 MCP 的 <code>create_project</code> 创建。</Typography>
+        <Card className="border py-4"><CardContent className="px-4">
+          <p className="text-sm text-muted-foreground">还没有项目。点右上角「新建项目」，或让 Agent 通过 MCP 的 <code>create_project</code> 创建。</p>
         </CardContent></Card>
       )}
 
-      <Grid container spacing={2}>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {projects.map((p) => (
-          <Grid key={p.key} size={{ xs: 12, sm: 6, md: 4 }}>
-            <Card variant="outlined" sx={{ height: '100%', opacity: p.archived ? 0.6 : 1 }}>
-              <CardActionArea component={RouterLink} to={paths.project(p.key)} sx={{ height: '100%', alignItems: 'stretch' }}>
+          <div key={p.key}>
+            <RouterLink to={paths.project(p.key)} className="block h-full">
+              <Card className={`h-full gap-0 border transition hover:border-ring/60 hover:shadow-md ${p.archived ? 'opacity-60' : ''}`}>
                 <CardContent>
-                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                    <Chip size="small" label={p.key} sx={{ fontFamily: 'monospace', fontWeight: 700 }} />
-                    {p.archived && <Chip size="small" label="已归档" variant="outlined" />}
-                  </Stack>
-                  <Typography variant="h6" noWrap>{p.name}</Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', minHeight: 40 }}>
+                  <div className="mb-2 flex items-center gap-2">
+                    <Badge className="font-mono font-bold">{p.key}</Badge>
+                    {p.archived && <Badge variant="outline">已归档</Badge>}
+                  </div>
+                  <h2 className="truncate text-lg font-semibold">{p.name}</h2>
+                  <p className="mt-1 line-clamp-2 min-h-10 text-sm text-muted-foreground">
                     {p.description || '（无描述）'}
-                  </Typography>
-                  <Stack direction="row" justifyContent="space-between" sx={{ mt: 1.5 }}>
-                    <Typography variant="caption" color="text.secondary">{p.task_count} 个任务</Typography>
+                  </p>
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">{p.task_count} 个任务</span>
                     <RelativeTime value={p.updated_at} />
-                  </Stack>
+                  </div>
                 </CardContent>
-              </CardActionArea>
-            </Card>
-          </Grid>
+              </Card>
+            </RouterLink>
+          </div>
         ))}
-      </Grid>
+      </div>
 
       {creating && <ProjectFormDialog open onClose={() => setCreating(false)} />}
-    </Box>
+    </div>
   );
 };
 
