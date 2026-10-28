@@ -1,62 +1,64 @@
-import { Timeline, TimelineConnector, TimelineContent, TimelineDot, TimelineItem, TimelineOppositeContent, TimelineSeparator } from '@mui/lab';
-import { Chip, Stack, Typography } from '@mui/material';
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
-import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import { CheckCircle, XCircle } from 'lucide-react';
 import type { HistoryEntry } from '@/api/types';
 import RelativeTime from '@/components/RelativeTime';
 import StatusChip from '@/components/StatusChip';
 import ActorChip from '@/components/ActorChip';
-import { STATUS_COLOR } from '@/features/tasks/status';
+import { Badge } from '@/components/ui/badge';
 
-// TimelineDot 的 color 是 'grey' 而不是 'default'
-const dotColor = (s: HistoryEntry['to']): 'info' | 'primary' | 'warning' | 'success' | 'error' | 'grey' =>
-  STATUS_COLOR[s] === 'default' ? 'grey' : STATUS_COLOR[s];
+const dotClass: Record<HistoryEntry['to'], string> = {
+  NEW: 'border-sky-600 text-sky-600',
+  IN_PROGRESS: 'border-primary bg-primary text-primary-foreground',
+  DONE: 'border-amber-600 bg-amber-600 text-white',
+  VERIFIED: 'border-emerald-600 bg-emerald-600 text-white',
+  REJECTED: 'border-destructive bg-destructive text-white',
+  CANCELLED: 'border-muted-foreground text-muted-foreground',
+};
 
 const HistoryTimeline = ({ history }: { history: HistoryEntry[] }) => (
-  <Timeline sx={{ p: 0, m: 0, '& .MuiTimelineOppositeContent-root': { flex: '0 0 auto', pl: 0, pr: 1.5, whiteSpace: 'nowrap' } }}>
+  <ol className="m-0 list-none p-0">
     {history.map((h, i) => (
-      <TimelineItem key={`${h.at}-${i}`}>
-        <TimelineOppositeContent sx={{ pt: 1 }}>
+      <li key={`${h.at}-${i}`} className="flex gap-3">
+        <div className="w-16 shrink-0 whitespace-nowrap pt-1">
           <RelativeTime value={h.at} />
-        </TimelineOppositeContent>
-        <TimelineSeparator>
-          <TimelineDot color={dotColor(h.to)} variant={h.from ? 'filled' : 'outlined'} />
-          {i < history.length - 1 && <TimelineConnector />}
-        </TimelineSeparator>
-        <TimelineContent sx={{ pb: 2.5 }}>
-          <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+        </div>
+        <div className="flex flex-col items-center">
+          <span className={`flex size-4 items-center justify-center rounded-full border-2 ${dotClass[h.to]}`} />
+          {i < history.length - 1 && <span className="w-px flex-1 bg-border" />}
+        </div>
+        <div className="min-w-0 flex-1 pb-6">
+          <div className="flex flex-wrap items-center gap-2">
             {h.from ? (
               <>
-                <StatusChip status={h.from} sx={{ opacity: 0.6 }} />
-                <Typography variant="body2" color="text.secondary">→</Typography>
+                <span className="opacity-60"><StatusChip status={h.from} /></span>
+                <span className="text-sm text-muted-foreground">→</span>
                 <StatusChip status={h.to} />
               </>
             ) : (
-              <Typography variant="body2">创建</Typography>
+              <span className="text-sm">创建</span>
             )}
             <ActorChip name={h.actor} size={18} />
-          </Stack>
-          {h.comment && <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, whiteSpace: 'pre-wrap' }}>{h.comment}</Typography>}
+          </div>
+          {h.comment && <p className="mt-1.5 whitespace-pre-wrap text-sm text-muted-foreground">{h.comment}</p>}
           {h.commits?.length > 0 && (
-            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>
-              {h.commits.map((c) => <Chip key={c} size="small" variant="outlined" label={c.slice(0, 10)} title={c} sx={{ fontFamily: '"JetBrains Mono", Menlo, monospace' }} />)}
-            </Stack>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {h.commits.map((c) => <Badge key={c} variant="outline" className="font-mono" title={c}>{c.slice(0, 10)}</Badge>)}
+            </div>
           )}
           {h.tests && (
-            <Stack sx={{ mt: 0.5, color: h.tests.passed ? 'success.main' : 'error.main' }}>
-              <Stack direction="row" alignItems="center" spacing={0.5}>
-                {h.tests.passed ? <CheckCircleOutlineIcon sx={{ fontSize: 16 }} /> : <ErrorOutlineIcon sx={{ fontSize: 16 }} />}
-                <Typography variant="caption">{h.tests.passed ? '测试通过' : '测试未通过'}{h.tests.summary ? ` · ${h.tests.summary}` : ''}</Typography>
-              </Stack>
+            <div className={`mt-1.5 ${h.tests.passed ? 'text-emerald-600' : 'text-destructive'}`}>
+              <div className="flex items-center gap-1.5">
+                {h.tests.passed ? <CheckCircle className="size-4" /> : <XCircle className="size-4" />}
+                <p className="text-xs">{h.tests.passed ? '测试通过' : '测试未通过'}{h.tests.summary ? ` · ${h.tests.summary}` : ''}</p>
+              </div>
               {h.tests.command && (
-                <Typography variant="caption" color="text.secondary" sx={{ fontFamily: '"JetBrains Mono", Menlo, monospace', wordBreak: 'break-all', pl: 2.5 }}>{h.tests.command}</Typography>
+                <p className="mt-0.5 break-all pl-5 font-mono text-xs text-muted-foreground">{h.tests.command}</p>
               )}
-            </Stack>
+            </div>
           )}
-        </TimelineContent>
-      </TimelineItem>
+        </div>
+      </li>
     ))}
-  </Timeline>
+  </ol>
 );
 
 export default HistoryTimeline;
