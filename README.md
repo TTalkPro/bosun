@@ -75,6 +75,7 @@ scripts/build-release.sh    # 前端 + rebar3 as prod tar → _build/prod/rel/bo
 | `BOSUN_DATA_DIR` | `data`（相对 release 根） | mnesia 与搜索索引目录 |
 | `BOSUN_SMTP_RELAY` `BOSUN_SMTP_PORT` `BOSUN_SMTP_USERNAME` `BOSUN_SMTP_PASSWORD` `BOSUN_SMTP_FROM` | 无（日志模式） | 注册验证码邮件 |
 | `BOSUN_COOKIE_SECURE` | `false` | https 部署设 `true`，登录 Cookie 加 `Secure` |
+| `BOSUN_TRUST_PROXY` | `false` | 前面有反向代理时设 `true`：登录 / 发验证码的限流按 `X-Forwarded-For` 最右一项算来源 IP。不设则所有人共用代理那一个 IP 的额度；没有代理别开 |
 
 ### systemd
 

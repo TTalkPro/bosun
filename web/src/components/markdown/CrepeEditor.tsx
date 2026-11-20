@@ -9,8 +9,10 @@ import { renderMermaidElement } from './mermaid';
 import { cmTheme } from './cmTheme';
 import { useEffectiveMode } from './useEffectiveMode';
 
-const EditorFrame = ({ className, children, fill }: React.ComponentProps<'div'> & { minHeight: number; compact: boolean; fill: boolean }) => (
-  <div className={className} style={{ display: 'flex', flexDirection: 'column', ...(fill ? { height: '100%', overflowY: 'auto' } : {}) }}>
+// 配色、内边距、最小高度都在 styles/markdown.css 的 .bosun-editor 下（Crepe 全走 --crepe-* 变量）
+const EditorFrame = ({ className, children, fill, compact, minHeight }: React.ComponentProps<'div'> & { minHeight: number; compact: boolean; fill: boolean }) => (
+  <div className={`bosun-editor ${className ?? ''}`} data-compact={compact} data-fill={fill}
+    style={{ display: 'flex', flexDirection: 'column', ['--bosun-editor-min-height' as string]: `${minHeight}px`, ...(fill ? { height: '100%', overflowY: 'auto' } : {}) }}>
     {children}
   </div>
 );
@@ -84,7 +86,7 @@ const CrepeEditor = ({ value, onChange, placeholder = '写点什么…支持 Mar
   }, []);
 
   return (
-    <EditorFrame className="rounded-[10px] border bg-card px-0 py-0 transition focus-within:border-primary focus-within:shadow-[0_0_0_2px_color-mix(in_oklab,var(--primary)_20%,transparent)]" minHeight={minHeight} compact={compact} fill={fill}><MarkdownBody className="[&_.milkdown]:[--crepe-color-background:var(--card)] [&_.milkdown]:text-foreground" ref={rootRef} /></EditorFrame>
+    <EditorFrame className="rounded-[10px] border bg-card px-0 py-0 transition focus-within:border-primary focus-within:shadow-[0_0_0_2px_color-mix(in_oklab,var(--primary)_20%,transparent)]" minHeight={minHeight} compact={compact} fill={fill}><MarkdownBody ref={rootRef} /></EditorFrame>
   );
 };
 

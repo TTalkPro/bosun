@@ -1,0 +1,115 @@
+/*
+ * Markdown 展示（react-markdown）与编辑器（Milkdown Crepe + CodeMirror）的配色。
+ *
+ * 迁移 shadcn 之前这些变量由 MUI palette 在 JS 里赋值（markdownStyles.ts / CrepeEditor.tsx 的 styled），
+ * 迁移时整段没带过来：cmTheme.ts 引用的 --md-* 没人定义（代码块无语法色、选区透明），
+ * rehype-highlight 产出的 hljs-* 没有样式，Crepe 的 --crepe-* 只剩一个 background。
+ * 这里按迁移前的取值补回，颜色改从 theme.css 的 token 取，明暗模式自动跟随。
+ * 不放进 @layer：要压过 MarkdownBody 上的 Tailwind 工具类（比如 pre 里的 code 不要再套一层底色）。
+ */
+
+.bosun-md {
+  --md-fg: var(--foreground);
+  --md-muted: var(--muted-foreground);
+  --md-border: var(--border);
+  --md-sel: color-mix(in oklab, var(--primary) 18%, transparent);
+  --md-line: color-mix(in oklab, var(--foreground) 4%, transparent);
+  --md-tooltip-bg: var(--popover);
+  /* 语法色：精简版 github / github-dark */
+  --md-kw: #cf222e;
+  --md-str: #0a3069;
+  --md-num: #0550ae;
+  --md-fn: #8250df;
+  --md-type: #953800;
+}
+
+.dark .bosun-md {
+  --md-kw: #ff7b72;
+  --md-str: #a5d6ff;
+  --md-num: #79c0ff;
+  --md-fn: #d2a8ff;
+  --md-type: #ffa657;
+}
+
+/* 代码块里的 code 不要行内 code 的底色 / 内边距 */
+.bosun-md pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+  white-space: pre;
+}
+
+/* highlight.js token */
+.bosun-md .hljs-comment,
+.bosun-md .hljs-quote { color: var(--md-muted); font-style: italic; }
+.bosun-md .hljs-keyword,
+.bosun-md .hljs-selector-tag,
+.bosun-md .hljs-meta { color: var(--md-kw); }
+.bosun-md .hljs-string,
+.bosun-md .hljs-attr,
+.bosun-md .hljs-regexp,
+.bosun-md .hljs-addition { color: var(--md-str); }
+.bosun-md .hljs-number,
+.bosun-md .hljs-literal,
+.bosun-md .hljs-built_in,
+.bosun-md .hljs-symbol { color: var(--md-num); }
+.bosun-md .hljs-title,
+.bosun-md .hljs-function,
+.bosun-md .hljs-section,
+.bosun-md .hljs-name { color: var(--md-fn); }
+.bosun-md .hljs-type,
+.bosun-md .hljs-class,
+.bosun-md .hljs-variable,
+.bosun-md .hljs-template-variable { color: var(--md-type); }
+.bosun-md .hljs-deletion { color: var(--destructive); }
+
+.bosun-md .bosun-mermaid svg { max-width: 100%; height: auto; }
+.bosun-md .bosun-mermaid-error { color: var(--destructive); }
+
+/* ---- 编辑器外框（CrepeEditor 的 EditorFrame） ---- */
+
+/* Crepe 的所有配色都走 --crepe-* 变量 */
+.bosun-editor .milkdown {
+  --crepe-color-background: var(--card);
+  --crepe-color-on-background: var(--foreground);
+  --crepe-color-surface: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --crepe-color-surface-low: color-mix(in oklab, var(--foreground) 8%, transparent);
+  --crepe-color-on-surface: var(--foreground);
+  --crepe-color-on-surface-variant: var(--muted-foreground);
+  --crepe-color-outline: color-mix(in oklab, var(--foreground) 38%, transparent);
+  --crepe-color-primary: var(--primary);
+  --crepe-color-secondary: color-mix(in oklab, var(--primary) 16%, transparent);
+  --crepe-color-on-secondary: var(--foreground);
+  --crepe-color-inverse: var(--foreground);
+  --crepe-color-on-inverse: var(--card);
+  --crepe-color-inline-code: var(--destructive);
+  --crepe-color-error: var(--destructive);
+  --crepe-color-hover: color-mix(in oklab, var(--foreground) 6%, transparent);
+  --crepe-color-selected: color-mix(in oklab, var(--primary) 14%, transparent);
+  --crepe-color-inline-area: color-mix(in oklab, var(--foreground) 8%, transparent);
+  --crepe-base-font-size: 14px;
+  --crepe-font-title: inherit;
+  --crepe-font-default: inherit;
+  --crepe-font-code: 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+  --crepe-shadow-1: 0 1px 3px rgb(0 0 0 / 0.2), 0 1px 2px rgb(0 0 0 / 0.12);
+  --crepe-shadow-2: 0 4px 12px rgb(0 0 0 / 0.22), 0 2px 4px rgb(0 0 0 / 0.12);
+  background: transparent;
+  color: var(--foreground);
+}
+
+/* 非紧凑模式左侧留 72px：Crepe 的块拖拽手柄（66px 宽）绝对定位在块的左边，
+   要这段内边距才不会画到编辑框外面 */
+.bosun-editor .milkdown .ProseMirror {
+  padding: 12px 24px 12px 72px;
+  min-height: var(--bosun-editor-min-height, 0px);
+  outline: none;
+}
+.bosun-editor .milkdown .ProseMirror > * { margin-left: 0; margin-right: 0; }
+
+/* 紧凑模式（打回 / 拒绝面板）：不留手柄的边，也不显示手柄 */
+.bosun-editor[data-compact='true'] .milkdown .ProseMirror { padding: 8px 12px; }
+.bosun-editor[data-compact='true'] .milkdown-block-handle { display: none; }
+
+/* 填满父容器（面板）：内容多了在框内滚动 */
+.bosun-editor[data-fill='true'] > *,
+.bosun-editor[data-fill='true'] .milkdown { min-height: 100%; box-sizing: border-box; }

@@ -125,7 +125,18 @@ robustness() ->
     ?assertMatch({error, {invalid, query, <<"invalid date", _/binary>>}}, bosun_bql:query(<<"created > 2026-13-45">>, #{})),
     ?assertMatch({error, {invalid, query, <<"invalid date", _/binary>>}}, bosun_bql:query(<<"created > 2026-02-30T25:00">>, #{})),
     ?assertMatch({error, {invalid, query, _}}, bosun_bql:query(<<"title ~ ", 255, 254>>, #{})),
-    ?assertEqual([<<"RB-1">>, <<"RB-2">>, <<"RB-3">>], Ids(<<"created > 2026-01-01T10:30">>)).
+    ?assertEqual([<<"RB-1">>, <<"RB-2">>, <<"RB-3">>], Ids(<<"created > 2026-01-01T10:30">>)),
+    %% feedback_count 数的是有效条数（被修订作废的旧版本不算），和任务摘要里的同口径
+    {ok, _} = bosun_feedback:add(<<"RB-1">>, #{<<"content">> => <<"v1">>, <<"author">> => <<"k">>}),
+    {ok, _} = bosun_feedback:revise(<<"RB-1#1">>, #{<<"content">> => <<"v2">>, <<"actor">> => <<"k">>}),
+    {ok, _} = bosun_feedback:add(<<"RB-2">>, #{<<"content">> => <<"a">>, <<"author">> => <<"k">>}),
+    {ok, _} = bosun_feedback:add(<<"RB-2">>, #{<<"content">> => <<"b">>, <<"author">> => <<"k">>}),
+    {ok, #{<<"feedback_count">> := 1}} = bosun_task:get(<<"RB-1">>),
+    ?assertEqual([<<"RB-1">>], Ids(<<"feedback_count = 1">>)),
+    ?assertEqual([<<"RB-2">>], Ids(<<"feedback_count >= 2">>)),
+    ?assertEqual([<<"RB-3">>], Ids(<<"feedback_count = 0">>)),
+    {ok, #{<<"tasks">> := [#{<<"id">> := <<"RB-2">>}, #{<<"id">> := <<"RB-1">>}, #{<<"id">> := <<"RB-3">>}]}} =
+        bosun_bql:query(<<"project = RB order by feedback_count desc">>, #{}).
 
 saved_filters() ->
     {ok, _} = bosun_project:create(#{<<"key">> => <<"SF">>, <<"name">> => <<"s">>}),

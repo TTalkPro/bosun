@@ -3,7 +3,7 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 
 // Crepe 缺省用 oneDark（固定深色）。这里用 CSS 变量取色，
-// 变量由 markdownStyles.ts 的 MarkdownBody 按明暗模式赋值，编辑器随之切换。
+// 变量在 styles/markdown.css 的 .bosun-md（MarkdownBody）上按明暗模式赋值，编辑器随之切换。
 const theme = EditorView.theme({
   '&': { backgroundColor: 'transparent', color: 'var(--md-fg)' },
   '.cm-content': { caretColor: 'var(--md-fg)' },

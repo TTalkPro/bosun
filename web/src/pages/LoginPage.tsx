@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { login, useMe } from '@/api/auth';
-import { isApiError } from '@/api/client';
+import { isApiError, tooManyText } from '@/api/client';
 import AuthShell from '@/features/auth/AuthShell';
 import { paths } from '@/routes/paths';
 
@@ -26,6 +26,7 @@ const LoginPage = () => {
     try { await login(email.trim(), password); navigate(safeNext(params.get('next')), { replace: true }); }
     catch (err) {
       if (isApiError(err) && err.status === 401) setErrors({ form: '邮箱或密码不对' });
+      else if (isApiError(err) && err.status === 429) setErrors({ form: tooManyText(err) });
       else if (isApiError(err) && err.status === 403) setErrors({ form: '这个账号已被停用，请联系组织管理员' });
       else setErrors({ form: err instanceof Error ? err.message : String(err) });
     } finally { setBusy(false); }

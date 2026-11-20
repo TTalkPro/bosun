@@ -415,7 +415,7 @@ test(Kind, nmatch, V, T, #{searches := S}) when Kind =:= text; Kind =:= feedback
 test(created, Op, V, T, _) -> cmp_ord(Op, T#task.created_at, V);
 test(updated, Op, V, T, _) -> cmp_ord(Op, T#task.updated_at, V);
 test(question, Op, V, T, Ctx) -> cmp(Op, open_question(T, Ctx), V);
-test(feedback_count, Op, V, T, _) -> cmp_ord(Op, T#task.feedback_seq, V);
+test(feedback_count, Op, V, T, Ctx) -> cmp_ord(Op, feedback_count(T, Ctx), V);
 test(feedback, empty, _, T, _) -> T#task.feedback_seq =:= 0;
 test(Field, Op, _, _, _) ->
     throw({bql, <<"operator ", (op_text_any(Op))/binary, " not supported for ", (atom_to_binary(Field, utf8))/binary>>}).
@@ -454,6 +454,12 @@ creator(#task{history = H}) ->
 
 %% feedback 只在需要时读；单人规模 feedback 表很小，直接脏读
 feedback_of(T, _Ctx) -> bosun_feedback:read_dirty(T#task.id).
+%% 有效（未作废）条数，和任务摘要里的 feedback_count 同口径。
+%% feedback_seq 是「发过多少条」，把被修订作废的旧版本也算在内，不能直接用。
+feedback_count(#task{feedback_seq = 0}, _Ctx) -> 0;
+feedback_count(T, Ctx) ->
+    length([F || F <- feedback_of(T, Ctx), F#feedback.superseded_by =:= undefined]).
+
 open_question(T, Ctx) ->
     Active = [F || F <- feedback_of(T, Ctx), F#feedback.superseded_by =:= undefined],
     case Active of
@@ -495,7 +501,7 @@ sort_key(assignee, T, _) -> assignee_lc(T);
 sort_key(kind, T, _) -> bosun_task:kind_of(T);
 sort_key(blocked, T, _) -> bosun_link:blocked(T#task.id);
 sort_key(epic, T, _) -> case T#task.epic of undefined -> <<>>; E -> E end;
-sort_key(feedback_count, T, _) -> T#task.feedback_seq;
+sort_key(feedback_count, T, Ctx) -> feedback_count(T, Ctx);
 sort_key(_, T, _) -> T#task.updated_at.
 
 status_rank(new) -> 1; status_rank(in_progress) -> 2; status_rank(done) -> 3;

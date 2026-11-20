@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link as RouterLink, Navigate, useNavigate } from 'react-router';
 import { register, requestCode, useMe, type CodeSent } from '@/api/auth';
-import { isApiError } from '@/api/client';
+import { isApiError, tooManyText } from '@/api/client';
 import AuthShell from '@/features/auth/AuthShell';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,7 +73,7 @@ const RegisterPage = () => {
     if (isApiError(err) && err.status === 400 && err.field) setErrors({ [err.field]: err.message });
     // 第二步的表单里没有邮箱输入框：冲突要显示在表单级，否则看不到
     else if (isApiError(err) && err.status === 409) setErrors(sent ? { form: '这个邮箱已经注册过了，直接登录即可' } : { email: '这个邮箱已经注册过了' });
-    else if (isApiError(err) && err.status === 429) setErrors({ form: '验证码刚发过，稍等一分钟再试' });
+    else if (isApiError(err) && err.status === 429) setErrors({ form: tooManyText(err) });
     else setErrors({ form: err instanceof Error ? err.message : String(err) });
   };
 

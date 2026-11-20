@@ -15,7 +15,11 @@ init(Req0, #{mode := Mode} = State) ->
 %% 注册第一步：发验证码
 handle(code, <<"POST">>, Req) ->
     with_body(Req, fun(Body, Req1) ->
-        reply_result(202, bosun_org:request_code(maps:get(<<"email">>, Body, <<>>)), Req1)
+        %% 每个来源每小时只能要几次码（单个邮箱另有 60 秒间隔），免得被拿去轰炸别人的邮箱
+        case bosun_web_limits:code_hit(bosun_web_limits:client_ip(Req1)) of
+            ok -> reply_result(202, bosun_org:request_code(maps:get(<<"email">>, Body, <<>>)), Req1);
+            {error, R} -> reply_error(Req1, R)
+        end
     end);
 handle(code, _, Req) -> method_not_allowed(Req, <<"POST">>);
 
@@ -33,12 +37,23 @@ handle(register, _, Req) -> method_not_allowed(Req, <<"POST">>);
 
 handle(login, <<"POST">>, Req) ->
     with_body(Req, fun(Body, Req1) ->
-        case bosun_user:authenticate(maps:get(<<"email">>, Body, <<>>), maps:get(<<"password">>, Body, <<>>)) of
-            {ok, #{<<"id">> := Uid, <<"org_id">> := OrgId} = User} ->
-                {ok, Token} = bosun_session:create(Uid),
-                {ok, Org} = bosun_org:get(OrgId),
-                reply(200, #{<<"user">> => User, <<"org">> => Org}, bosun_web_auth:set_session_cookie(Token, Req1));
-            {error, R} -> reply_error(Req1, R)
+        Ip = bosun_web_limits:client_ip(Req1),
+        Email = maps:get(<<"email">>, Body, <<>>),
+        %% 失败次数到上限：不算密码直接 429（正确的密码也一样，窗口过了自动恢复）
+        case bosun_web_limits:login_check(Ip, Email) of
+            {error, R0} -> reply_error(Req1, R0);
+            ok ->
+                case bosun_user:authenticate(Email, maps:get(<<"password">>, Body, <<>>)) of
+                    {ok, #{<<"id">> := Uid, <<"org_id">> := OrgId} = User} ->
+                        ok = bosun_web_limits:login_ok(Ip, Email),
+                        {ok, Token} = bosun_session:create(Uid),
+                        {ok, Org} = bosun_org:get(OrgId),
+                        reply(200, #{<<"user">> => User, <<"org">> => Org}, bosun_web_auth:set_session_cookie(Token, Req1));
+                    {error, invalid_credentials} ->
+                        ok = bosun_web_limits:login_failed(Ip, Email),
+                        reply_error(Req1, invalid_credentials);
+                    {error, R} -> reply_error(Req1, R)
+                end
         end
     end);
 handle(login, _, Req) -> method_not_allowed(Req, <<"POST">>);
@@ -64,8 +79,13 @@ handle(me, _, Req) -> method_not_allowed(Req, <<"GET">>);
 handle(password, <<"POST">>, Req) ->
     #{user_id := Uid, via := Via} = bosun_web_auth:principal(Req),
     with_body(Req, fun(Body, Req1) ->
-        case bosun_user:change_password(Uid, maps:get(<<"current">>, Body, <<>>), maps:get(<<"new">>, Body, <<>>)) of
+        Res = case bosun_web_limits:password_check(Uid) of
+                  ok -> bosun_user:change_password(Uid, maps:get(<<"current">>, Body, <<>>), maps:get(<<"new">>, Body, <<>>));
+                  {error, _} = Limited -> Limited
+              end,
+        case Res of
             ok ->
+                ok = bosun_web_limits:password_ok(Uid),
                 %% 改密把该用户的会话全作废了（别处登录的都要重新登录）；当前浏览器换一个新会话
                 Req2 = case Via of
                            session ->
@@ -76,6 +96,7 @@ handle(password, <<"POST">>, Req) ->
                 cowboy_req:reply(204, #{}, <<>>, Req2);
             %% 当前密码不对是表单错误，不是「没登录」：回 400，别让前端当成会话失效去跳登录页
             {error, invalid_credentials} ->
+                ok = bosun_web_limits:password_failed(Uid),
                 reply_error(Req1, {invalid, current, <<"wrong current password">>});
             {error, R} -> reply_error(Req1, R)
         end

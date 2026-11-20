@@ -31,7 +31,10 @@ core_test_() ->
         {"epic follows step membership", fun epic_membership_sync/0},
         {"search ranks label > title > body", fun search_field_ranking/0},
         {"search index rebuilt when unopenable or not ours", fun search_index_recovery/0},
-        {"links", fun links/0}
+        {"search reads bypass the writer and survive reindex", fun search_concurrent_reads/0},
+        {"search index merge reclaims dead revisions", fun search_merge/0},
+        {"links", fun links/0},
+        {"rate limiter", fun rate_limiter/0}
     ],
     {foreach, fun setup/0, fun teardown/1,
      [fun(_) -> {Name, F} end || {Name, F} <- Tests]}.
@@ -436,6 +439,90 @@ search_index_recovery() ->
     ok = bosun_search:sync(),
     {ok, [#{id := <<"REC-2">>}]} = bosun_search:search(<<"latecomer">>, #{}).
 
+%% 读不经过写进程：写进程卡住（在重建 / 被挂起）时检索照常；重建换代期间并发检索一次都不失败
+search_concurrent_reads() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"CR">>, <<"name">> => <<"c">>}),
+    [{ok, _} = bosun_task:create(<<"CR">>, #{<<"title">> => <<"needle ", (integer_to_binary(I))/binary>>}) || I <- lists:seq(1, 20)],
+    ok = bosun_search:sync(),
+    ok = sys:suspend(bosun_search),
+    try
+        {ok, Hits} = bosun_search:search(<<"needle">>, #{limit => 50}),
+        ?assertEqual(20, length(Hits)),
+        ?assertMatch(#{docs := 20}, bosun_search:status())
+    after
+        ok = sys:resume(bosun_search)
+    end,
+    Self = self(),
+    Readers = [spawn_link(fun Loop() ->
+                   receive stop -> Self ! {done, self(), ok}
+                   after 0 ->
+                       case bosun_search:search(<<"needle">>, #{limit => 50}) of
+                           {ok, L} when length(L) =:= 20 -> Loop();
+                           Other -> Self ! {done, self(), {bad, Other}}
+                       end
+                   end
+               end) || _ <- lists:seq(1, 8)],
+    [{ok, 20} = bosun_search:reindex() || _ <- lists:seq(1, 5)],
+    [R ! stop || R <- Readers],
+    [receive {done, R, Res} -> ?assertEqual(ok, Res) after 5000 -> error(reader_stuck) end || R <- Readers],
+    %% 只剩当前这一代的目录
+    #{dir := Dir} = bosun_search:status(),
+    {ok, Gens} = file:list_dir(filename:dirname(Dir)),
+    ?assertEqual([filename:basename(Dir)], Gens),
+    %% 重建期间排队的写不丢
+    {ok, _} = bosun_task:create(<<"CR">>, #{<<"title">> => <<"needle late">>}),
+    ok = bosun_search:sync(),
+    {ok, Hits2} = bosun_search:search(<<"needle">>, #{limit => 50}),
+    ?assertEqual(21, length(Hits2)).
+
+%% 任务每改一次索引里多一篇、旧的那篇占着盘：merge 把死数据回收掉，检索结果不变，之后照常读写
+search_merge() ->
+    Task = fun(I, Rev) -> #{<<"id">> => <<"MG-", (integer_to_binary(I))/binary>>, <<"project_key">> => <<"MG">>,
+                            <<"title">> => <<"haystack item">>,
+                            <<"description">> => iolist_to_binary([<<"revision ">>, integer_to_binary(Rev), <<" ">>,
+                                                                   lists:duplicate(20, <<"lorem ipsum dolor ">>)])} end,
+    [bosun_search:index_task(Task(I, Rev)) || Rev <- lists:seq(1, 40), I <- lists:seq(1, 50)],
+    ok = bosun_search:sync(),
+    #{dir := Dir} = bosun_search:status(),
+    Size = fun() -> lists:sum([filelib:file_size(F) || F <- filelib:wildcard(filename:join(Dir, "*.bitcask.data"))]) end,
+    Hits = fun() -> {ok, L} = bosun_search:search(<<"haystack">>, #{limit => 100}), lists:sort([Id || #{id := Id} <- L]) end,
+    Before = Hits(),
+    ?assertEqual(50, length(Before)),
+    Size0 = Size(),
+    %% 死字节不到门槛（缺省 1 MB）：自动那一档不动
+    ?assertEqual({ok, not_needed}, bosun_search:merge()),
+    application:set_env(bosun_core, search_merge_min_dead_bytes, 1024),
+    try
+        {ok, #{reclaimed := Reclaimed, files := N}} = bosun_search:merge(),
+        ?assert(N >= 1),
+        ?assert(Reclaimed > 0),
+        ?assert(Size() * 4 < Size0),
+        ?assertEqual(Before, Hits()),
+        %% 刚并完，没什么可并的了
+        ?assertEqual({ok, not_needed}, bosun_search:merge()),
+        %% 之后的写、读、重启都正常
+        bosun_search:index_task(Task(51, 1)),
+        ok = bosun_search:sync(),
+        ?assertEqual(51, length(Hits())),
+        Root = filename:dirname(Dir),
+        ok = gen_server:stop(bosun_search),
+        {ok, Pid} = bosun_search:start_link(Root),
+        unlink(Pid),
+        ?assertEqual(51, length(Hits())),
+        ?assertMatch(#{docs := 51}, bosun_search:status()),
+        %% 定时那一路：到点自己跑。重启之后才变成死数据的文件也要能并掉
+        %% （引擎的 needs_merge 这时看不见它们，所以文件是按 status 自己挑的）
+        [bosun_search:index_task(Task(I, Rev)) || Rev <- lists:seq(1, 20), I <- lists:seq(1, 50)],
+        ok = bosun_search:sync(),
+        Size1 = Size(),
+        whereis(bosun_search) ! merge_tick,
+        ok = bosun_search:sync(),
+        ?assert(Size() * 2 < Size1),
+        ?assertEqual(51, length(Hits()))
+    after
+        application:unset_env(bosun_core, search_merge_min_dead_bytes)
+    end.
+
 %% Epic 的状态由步骤集合推导：不只步骤迁移，加步骤 / 换 Epic / 被替代撤销也要级联
 epic_membership_sync() ->
     {ok, _} = bosun_project:create(#{<<"key">> => <<"EM">>, <<"name">> => <<"m">>}),
@@ -469,6 +556,35 @@ epic_membership_sync() ->
     {ok, _} = bosun_task:update(<<"EM-5">>, #{<<"title">> => <<"s3 renamed">>}),
     {ok, #{<<"history">> := H2}} = bosun_task:get(<<"EM-1">>),
     ?assertEqual(length(H1), length(H2)).
+
+rate_limiter() ->
+    %% 进程没起来：一律放行
+    ?assertEqual(ok, bosun_rate_limit:hit(t, k, 1, 1000)),
+    {ok, Pid} = bosun_rate_limit:start_link(),
+    try
+        ?assertEqual(ok, bosun_rate_limit:check(t, k, 2, 1000)),
+        ?assertEqual(ok, bosun_rate_limit:hit(t, k, 2, 1000)),
+        ?assertEqual(ok, bosun_rate_limit:hit(t, k, 2, 1000)),
+        ?assertMatch({error, {too_many_requests, 1}}, bosun_rate_limit:hit(t, k, 2, 1000)),
+        ?assertMatch({error, {too_many_requests, _}}, bosun_rate_limit:check(t, k, 2, 1000)),
+        %% 别的 key / 别的桶互不影响
+        ?assertEqual(ok, bosun_rate_limit:hit(t, other, 2, 1000)),
+        ?assertEqual(ok, bosun_rate_limit:hit(u, k, 2, 1000)),
+        %% 清零、窗口到期
+        ok = bosun_rate_limit:reset(t, k),
+        ?assertEqual(ok, bosun_rate_limit:hit(t, k, 1, 60)),
+        ?assertMatch({error, _}, bosun_rate_limit:hit(t, k, 1, 60)),
+        timer:sleep(80),
+        ?assertEqual(ok, bosun_rate_limit:hit(t, k, 1, 60)),
+        %% 过期项会被清扫
+        timer:sleep(80),
+        Pid ! sweep,
+        _ = sys:get_state(Pid),
+        ?assertEqual([], ets:lookup(bosun_rate_limit, {t, k})),
+        ok = bosun_rate_limit:reset_all()
+    after
+        unlink(Pid), exit(Pid, shutdown)
+    end.
 
 workflow_doc() ->
     {ok, Zh} = bosun_workflow:doc(),

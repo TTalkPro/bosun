@@ -7,9 +7,9 @@
 -include_lib("stdlib/include/assert.hrl").
 
 -export([all/0, init_per_suite/1, end_per_suite/1, init_per_testcase/2, end_per_testcase/2]).
--export([rest_chain/1, rest_errors/1, static_fallback/1, mcp_end_to_end/1, auth_flow/1, org_isolation/1]).
+-export([rest_chain/1, rest_errors/1, static_fallback/1, mcp_end_to_end/1, auth_flow/1, org_isolation/1, rate_limits/1]).
 
-all() -> [rest_chain, rest_errors, static_fallback, mcp_end_to_end, auth_flow, org_isolation].
+all() -> [rest_chain, rest_errors, static_fallback, mcp_end_to_end, auth_flow, org_isolation, rate_limits].
 
 init_per_suite(Config) ->
     %% 同一 VM 里先跑过 eunit（bosun_test_env）会留下独立的 bosun_search / bosun_identity，
@@ -33,6 +33,9 @@ end_per_suite(_Config) ->
 
 %% 每个用例：清库，注册组织 Acme（管理员 Alice），拿到登录 Cookie
 init_per_testcase(_, Config) ->
+    ok = bosun_rate_limit:reset_all(),
+    application:unset_env(bosun_web, rate_limits),
+    application:set_env(bosun_web, trust_proxy, false),
     ok = bosun_store:reset_tables(),
     ok = bosun_search:reset(),
     Base = ?config(base, Config),
@@ -357,6 +360,56 @@ auth_flow(Config) ->
     %% 登出：cookie 失效
     {204, _} = req(post, Bob1, "/api/v1/auth/logout"),
     {401, _} = req(get, Bob1, "/api/v1/auth/me"),
+    ok.
+
+%% 登录 / 发码 / 改密的限流（designs/13 §4.4）
+rate_limits(Config) ->
+    Base = ?config(base, Config),
+    Login = fun(Email, Pw, Headers) ->
+        {ok, {{_, Status, _}, H, Body}} =
+            httpc:request(post, {Base ++ "/api/v1/auth/login", Headers, "application/json",
+                                 bosun_json:encode(#{<<"email">> => Email, <<"password">> => Pw})},
+                          [], [{body_format, binary}]),
+        {Status, H, json:decode(Body)}
+    end,
+    %% 同一来源对同一邮箱：10 次失败后第 11 次起 429，正确的密码也不行
+    [{401, _, _} = Login(<<"alice@acme.io">>, <<"wrong">>, []) || _ <- lists:seq(1, 10)],
+    {429, H429, #{<<"error">> := <<"too_many_requests">>, <<"detail">> := #{<<"retry_after">> := Secs}}} =
+        Login(<<"Alice@Acme.io ">>, <<"secret123">>, []),
+    ?assert(Secs > 0 andalso Secs =< 900),
+    ?assertEqual(integer_to_list(Secs), proplists:get_value("retry-after", H429)),
+    %% 别的邮箱不受牵连；已有会话照常用
+    {401, _, _} = Login(<<"nobody@acme.io">>, <<"wrong">>, []),
+    {200, _} = req(get, Config, "/api/v1/auth/me"),
+    %% 没开 trust_proxy：X-Forwarded-For 不被采信，换个假 IP 绕不过去
+    {429, _, _} = Login(<<"alice@acme.io">>, <<"secret123">>, [{"x-forwarded-for", "9.9.9.9"}]),
+    %% 开了：按最右一项算来源（左边是客户端随便写的）
+    application:set_env(bosun_web, trust_proxy, true),
+    {200, _, _} = Login(<<"alice@acme.io">>, <<"secret123">>, [{"x-forwarded-for", "1.2.3.4, 9.9.9.9"}]),
+    [{401, _, _} = Login(<<"alice@acme.io">>, <<"wrong">>, [{"x-forwarded-for", "6.6.6.6, 9.9.9.8"}]) || _ <- lists:seq(1, 10)],
+    {429, _, _} = Login(<<"alice@acme.io">>, <<"secret123">>, [{"x-forwarded-for", "7.7.7.7, 9.9.9.8"}]),
+    {200, _, _} = Login(<<"alice@acme.io">>, <<"secret123">>, [{"x-forwarded-for", "9.9.9.8, 9.9.9.7"}]),
+    application:set_env(bosun_web, trust_proxy, false),
+    %% 成功会清掉「这个来源 + 这个邮箱」的失败计数
+    ok = bosun_rate_limit:reset_all(),
+    [{401, _, _} = Login(<<"alice@acme.io">>, <<"wrong">>, []) || _ <- lists:seq(1, 9)],
+    {200, _, _} = Login(<<"alice@acme.io">>, <<"secret123">>, []),
+    [{401, _, _} = Login(<<"alice@acme.io">>, <<"wrong">>, []) || _ <- lists:seq(1, 9)],
+    {200, _, _} = Login(<<"alice@acme.io">>, <<"secret123">>, []),
+    %% 发验证码：同一来源每小时 5 次
+    ok = bosun_rate_limit:reset_all(),
+    [{202, _} = req(post, [{base, Base}], "/api/v1/auth/register/code", #{<<"email">> => <<"u", (integer_to_binary(I))/binary, "@x.io">>})
+     || I <- lists:seq(1, 5)],
+    {429, #{<<"error">> := <<"too_many_requests">>}} = req(post, [{base, Base}], "/api/v1/auth/register/code", #{<<"email">> => <<"u6@x.io">>}),
+    %% 改密：当前密码连错 10 次后锁，正确的也 429
+    [{400, #{<<"field">> := <<"current">>}} = req(post, Config, "/api/v1/auth/password", #{<<"current">> => <<"nope">>, <<"new">> => <<"newsecret1">>})
+     || _ <- lists:seq(1, 10)],
+    {429, _} = req(post, Config, "/api/v1/auth/password", #{<<"current">> => <<"secret123">>, <<"new">> => <<"newsecret1">>}),
+    %% 上限可配、可整个关掉
+    application:set_env(bosun_web, rate_limits, #{code_ip => {6, 3600000}}),
+    {202, _} = req(post, [{base, Base}], "/api/v1/auth/register/code", #{<<"email">> => <<"u6@x.io">>}),
+    application:set_env(bosun_web, rate_limits, off),
+    {204, _} = req(post, Config, "/api/v1/auth/password", #{<<"current">> => <<"secret123">>, <<"new">> => <<"newsecret1">>}),
     ok.
 
 %% 两个组织互相看不到

@@ -121,6 +121,24 @@ DELETE /api/v1/keys/:id                                                        �
 - 同理，已绑定主体的会话 `identify` 不能取组织里**别的用户**的显示名（署名就是身份：只有原作者能修订 feedback、自验收看 assignee）；自己的名字和任意 Agent 名照旧。
 - `.mcp.json`：`"headers": {"Authorization": "Bearer ${BOSUN_API_KEY}"}`；README 写明先在「账户」页建 key、`export BOSUN_API_KEY=...`。
 
+### 4.4 限流（`bosun_web_limits` + `bosun_rate_limit`）
+
+认证入口按来源 IP / 邮箱 / 用户计数，超了回 429 `too_many_requests`（`detail.retry_after` 秒，同时带 `Retry-After` 头）。
+
+| 入口 | 计什么 | 桶 | 上限 |
+|---|---|---|---|
+| `POST /auth/login` | 只数**失败**；成功清掉「来源 + 邮箱」那一桶 | 来源 IP + 邮箱 | 10 次 / 15 分钟 |
+| | | 来源 IP | 50 次 / 15 分钟 |
+| | | 邮箱（不分来源） | 100 次 / 1 小时 |
+| `POST /auth/register/code` | 每次请求 | 来源 IP | 5 次 / 1 小时（单个邮箱另有 60 秒间隔） |
+| `POST /auth/password` | 当前密码输错 | 用户 | 10 次 / 15 分钟 |
+
+- 登录到上限后**不再算密码**直接拒，正确的密码也一样，窗口过了自动恢复——没有「永久锁定」，也不需要管理员解锁。
+- 「邮箱（不分来源）」那一桶放得宽：太紧的话别人随手就能把某个用户锁在外面；它只是给分布式猜密码封个顶。
+- 计数在内存里（ETS，固定窗口，每分钟清过期项），重启清零。这是节流，不是审计。
+- 上限可在 `{bosun_web, [{rate_limits, #{login_ip_email => {10, 900000}, ...}}]}` 里改，`{rate_limits, off}` 整个关掉。
+- **来源 IP**：缺省取 TCP 对端。前面有反向代理时对端永远是代理，所有人共用一个额度——要设 `{trust_proxy, true}` / `BOSUN_TRUST_PROXY=true`，改取 `X-Forwarded-For` **最右边**一项（代理自己看到的对端，客户端伪造不了）。没有代理却开了它等于让客户端自报 IP。
+
 ## 5. 前端（web/）
 
 | 路由 | 页面 |

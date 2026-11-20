@@ -46,3 +46,10 @@ client.interceptors.response.use(
 export const fetcher = <T>(url: string) => client.get<T>(url).then((r) => r.data);
 
 export const isApiError = (e: unknown): e is ApiError => e instanceof ApiError;
+
+/** 429 的中文提示：后端在 detail.retry_after 里给了还要等多少秒 */
+export const tooManyText = (e: ApiError): string => {
+  const secs = Number(e.detail?.retry_after);
+  if (!Number.isFinite(secs) || secs <= 0) return '尝试次数太多，请稍后再试';
+  return secs < 90 ? `尝试次数太多，请 ${Math.ceil(secs)} 秒后再试` : `尝试次数太多，请 ${Math.ceil(secs / 60)} 分钟后再试`;
+};

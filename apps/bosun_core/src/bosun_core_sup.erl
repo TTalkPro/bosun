@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @doc bosun_core 顶层 supervisor：只有一个子进程——全文索引 bosun_search。
+%%% @doc bosun_core 顶层 supervisor：全文索引 bosun_search 与限流计数表 bosun_rate_limit。
 %%%-------------------------------------------------------------------
 -module(bosun_core_sup).
 -behaviour(supervisor).
@@ -11,5 +11,7 @@ start_link() ->
 
 init([]) ->
     Children = [#{id => bosun_search, start => {bosun_search, start_link, []},
-                  restart => permanent, shutdown => 5000, type => worker}],
+                  restart => permanent, shutdown => 5000, type => worker},
+                #{id => bosun_rate_limit, start => {bosun_rate_limit, start_link, []},
+                  restart => permanent, shutdown => 1000, type => worker}],
     {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, Children}}.

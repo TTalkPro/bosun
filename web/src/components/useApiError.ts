@@ -1,6 +1,6 @@
 import { useSnackbar } from '@/components/notify';
 import { useCallback } from 'react';
-import { isApiError } from '@/api/client';
+import { isApiError, tooManyText } from '@/api/client';
 
 // 组件层统一的错误提示。
 // 400 且 field 在调用方声明的 handledFields 里：不弹提示，返回 field 让表单在输入框下显示；
@@ -15,6 +15,11 @@ export const useApiError = () => {
           if (e.field && handledFields.includes(e.field)) return { field: e.field, message: e.message };
           enqueueSnackbar(e.message, { variant: 'error' });
           return { message: e.message };
+        }
+        if (e.status === 429) {
+          const message = tooManyText(e);
+          enqueueSnackbar(message, { variant: 'warning' });
+          return { message };
         }
         if (e.status === 413) {
           enqueueSnackbar('内容太大，服务端拒收', { variant: 'error' });

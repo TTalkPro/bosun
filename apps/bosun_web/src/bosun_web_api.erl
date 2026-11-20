@@ -69,6 +69,9 @@ reply_result(OkStatus, {ok, Value}, Req) -> reply(OkStatus, Value, Req);
 reply_result(_OkStatus, {error, Reason}, Req) -> reply_error(Req, Reason).
 
 -spec reply_error(cowboy_req:req(), term()) -> cowboy_req:req().
+reply_error(Req, {too_many_requests, Secs} = Reason) ->
+    {Status, Body} = error_to_http(Reason),
+    reply(Status, Body, cowboy_req:set_resp_header(<<"retry-after">>, integer_to_binary(Secs), Req));
 reply_error(Req, Reason) ->
     {Status, Body} = error_to_http(Reason),
     reply(Status, Body, Req).
@@ -135,7 +138,8 @@ error_to_http(code_expired) ->
 error_to_http(code_mismatch) ->
     {400, #{<<"error">> => <<"code_mismatch">>, <<"field">> => <<"code">>, <<"message">> => <<"wrong verification code">>}};
 error_to_http({too_many_requests, Secs}) ->
-    {429, #{<<"error">> => <<"too_many_requests">>, <<"message">> => <<"a code was sent recently; retry later">>,
+    {429, #{<<"error">> => <<"too_many_requests">>,
+            <<"message">> => <<"too many attempts; retry in ", (integer_to_binary(Secs))/binary, " seconds">>,
             <<"detail">> => #{<<"retry_after">> => Secs}}};
 error_to_http({mail_failed, Why}) ->
     logger:error("bosun_mailer failed: ~p", [Why]),

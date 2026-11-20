@@ -38,14 +38,14 @@
 ## 没动 · 建议
 按价值排。
 
-1. **登录 / 发验证码没有限流**：登录可以无限试密码（每次约几十毫秒的 PBKDF2）；发码只按邮箱限 60 秒，不按来源限，可以拿来轰炸任意邮箱。
-2. **检索索引从不 merge**：每次改任务追加一篇文档，旧版本一直占着盘。现网两个月 656K，不急；`reindex` 现在会顺带清干净。要做的话是定时 `needs_merge` → `merge`。
-3. **bosun_search 是单进程串行**：读写、重建都排一个队，重建期间检索全等着。bitcask 的句柄本身可并发读，可以把句柄放 `persistent_term` 让读直通——但重建时要换句柄，得处理好。
+1. ~~登录 / 发验证码没有限流~~ **已做（第三轮）**：登录失败按「来源 + 邮箱」/ 来源 / 邮箱三个桶计数，发码按来源，改密按用户；超了 429 + `Retry-After`（designs/13 §4.4）。**部署在反向代理后面要设 `BOSUN_TRUST_PROXY=true`**，否则所有人共用代理那一个 IP 的额度。
+2. ~~检索索引从不 merge~~ **已做（第四轮）**：写进程定时看死字节，够多就封口当前写文件并做旁车 merge（designs/08）。顺带发现 `bitcask:merge` 带 `{analyzer, jieba}` 而不显式给 `dict_path` 时 cppjieba 会 abort 整个节点（`bitcask:open` 会补缺省词典目录，`merge` 不会）——bosun 侧自己补了，bitcask 那边值得修。另一处：`needs_merge` 看不见本次打开之后才产生的死数据（重开库才认），所以合并哪些文件 bosun 按 `status` 自己挑。
+3. ~~bosun_search 是单进程串行~~ **已做（2026-11-19 第二轮）**：读直接用发布在 `persistent_term` 的句柄，不经写进程；索引目录按代（`gen-<N>`），重建在新一代里建好再换，重建期间检索不等也不失败（designs/08）。
 4. **BQL / 列表每次全表扫**：`bosun_bql:query` 把全部任务读出来逐条求值，`blocked` 排序时每次比较都读关联表。任务上万之前不是问题。本次只把可见性检查从逐条改成逐项目。
-5. **BQL `feedback_count`** 用的是 `feedback_seq`（含被修订作废的旧版本，docs/BQL.md 是这么写的），而任务摘要里的 `feedback_count` 只数有效条数——两个同名字段口径不同，容易误会。
+5. ~~BQL `feedback_count` 与任务摘要口径不同~~ **已做（第二轮）**：BQL 也只数有效条数（修订作废的不算），docs/BQL.md、designs/09 同步。
 6. **REST 读接口不看 `read` scope**：只有写接口按 scope 拦；一个只有 `write` 的 key 也能读。MCP 那边读工具是要 `read` 的。
 7. **TransitionPanel 先写 Feedback 再迁移**，迁移失败重试会多出一条相同的 Feedback。彻底的做法是 transition 接口收 `feedback`，同一事务落库。
-8. **前端样式遗留**：`--md-*` 变量和 hljs 配色随 MUI 一起没了（代码块无高亮、编辑器选区透明）；侧栏 `NavLink` 高亮规则不对；主题状态有三份互不同步。需要对着页面调，没盲改。
+8. ~~前端样式遗留~~ **已做（第二轮）**：`--md-*` / hljs / `--crepe-*` 配色按迁移前的取值补回（`styles/markdown.css`）、编辑器最小高度与手柄留边恢复；侧栏高亮改成自己算 `aria-current`。主题状态也收成了一个 store（`hooks/use-theme.ts`，`useSyncExternalStore`）：布局、markdown / mermaid、toast 都订阅它；偏好只在与系统不同的时候落盘，与系统一致即跟随系统。
 9. **前端体积 / 请求**：路由没有懒加载（首屏带上 Query / Data / Org / Account）；写操作后串行等好几个重拉；普通任务详情每次拉 500 条 Epic 摘要。
 10. **依赖里没人用的包**：`@radix-ui/react-tabs`、`@radix-ui/react-scroll-area` 及对应的 `ui/*.tsx`；`tsconfig.app.json` 的 `strict: false`。
 11. **整库备份不含组织 / 用户 / key**：`export` 是给「搬数据」用的，不是灾备；完整备份要拷 `data/mnesia/`，或者加一个系统作用域的全表导出。

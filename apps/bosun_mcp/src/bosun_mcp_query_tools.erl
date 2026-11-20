@@ -16,7 +16,7 @@
     "```\n\n"
     "Fields: project (key) | id | status | priority | labels (label) | created_by (creator, reporter, requester) | assignee | kind (task, epic) | epic (parent epic id) | blocked (true/false) | depends_on / blocks / replaces / replaced_by (task id) | "
     "title | description | text (BM25 over title+description+labels+feedback) | feedback (BM25 over feedback only) | "
-    "created | updated | question (true = last feedback is an unanswered question) | feedback_count\n\n"
+    "created | updated | question (true = last feedback is an unanswered question) | feedback_count (active entries, superseded revisions excluded)\n\n"
     "Operators: = != ~ !~ > >= < <= | IN (a, b) | NOT IN (a, b) | IS EMPTY | IS NOT EMPTY | AND OR NOT | parentheses | "
     "ORDER BY field [ASC|DESC], ...\n\n"
     "- `~` is full-text (text, feedback) or substring (title, description, id, labels, created_by); "
