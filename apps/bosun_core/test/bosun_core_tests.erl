@@ -29,7 +29,7 @@ core_test_() ->
         {"epics", fun epics/0},
         {"epic auto flow", fun epic_auto_flow/0},
         {"epic follows step membership", fun epic_membership_sync/0},
-        {"search ranks label > title > body", fun search_field_ranking/0},
+        {"search ranks label and title hits above body", fun search_field_ranking/0},
         {"search index rebuilt when unopenable or not ours", fun search_index_recovery/0},
         {"search reads bypass the writer and survive reindex", fun search_concurrent_reads/0},
         {"search index merge reclaims dead revisions", fun search_merge/0},
@@ -335,7 +335,7 @@ full_text_search() ->
     ?assertEqual([<<"OTH-1">>], [maps:get(<<"id">>, maps:get(<<"task">>, H)) || H <- H3]),
     {ok, #{<<"hits">> := H4}} = bosun_task:search(<<"heal">>, #{<<"project">> => <<"SRC">>}),
     ?assert(length(H4) >= 1),
-    %% 标签也进索引，且标签命中排在正文命中前面（fields 加权）
+    %% 标签也进索引，且标签命中排在正文命中前面（字段 boost）
     {ok, _} = bosun_task:create(<<"SRC">>, #{<<"title">> => <<"Talk to the platform team">>, <<"description">> => <<"backend backend backend">>}),
     ok = bosun_search:sync(),
     {ok, #{<<"hits">> := [#{<<"task">> := #{<<"id">> := <<"SRC-1">>}}, #{<<"task">> := #{<<"id">> := <<"SRC-4">>}}]}} = bosun_task:search(<<"backend">>, #{}),
@@ -388,8 +388,9 @@ stale_search_index() ->
     {ok, []} = bosun_search:search(<<"ghost">>, #{}),
     {ok, [#{id := <<"STL-1">>}]} = bosun_search:search(<<"fresh">>, #{}).
 
-%% bitcask 10 下命名字段的子分数比默认字段小一截：靠命中字段显式加权，
-%% 标签命中 > 标题命中 > 正文里词频再高也排后面
+%% 标签 / 标题命中排在正文命中前面，正文里词频再高也一样。只靠引擎内的字段 boost
+%% （labels^8、title^3），不在引擎外再加权（bitcask 10 时期的绕法，升 12 时去掉）。
+%% 标签命中与标题命中之间不定先后：各字段按自己的 BM25 统计打分，词在哪个字段里更稀有哪边就高
 search_field_ranking() ->
     {ok, _} = bosun_project:create(#{<<"key">> => <<"RNK">>, <<"name">> => <<"r">>}),
     {ok, _} = bosun_task:create(<<"RNK">>, #{<<"title">> => <<"body only">>,
@@ -401,7 +402,9 @@ search_field_ranking() ->
     {ok, _} = bosun_feedback:add(<<"RNK-1">>, #{<<"content">> => <<"zebra in a comment">>}),
     ok = bosun_search:sync(),
     {ok, #{<<"hits">> := Hits}} = bosun_task:search(<<"zebra">>, #{}),
-    ?assertEqual([<<"RNK-3">>, <<"RNK-2">>, <<"RNK-1">>], [maps:get(<<"id">>, maps:get(<<"task">>, H)) || H <- Hits]),
+    [First, Second, Third] = [maps:get(<<"id">>, maps:get(<<"task">>, H)) || H <- Hits],
+    ?assertEqual([<<"RNK-2">>, <<"RNK-3">>], lists:sort([First, Second])),
+    ?assertEqual(<<"RNK-1">>, Third),
     %% 多词 AND 仍然成立
     {ok, #{<<"hits">> := [#{<<"task">> := #{<<"id">> := <<"RNK-2">>}}]}} = bosun_task:search(<<"zebra crossing">>, #{}).
 

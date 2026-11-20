@@ -15,7 +15,7 @@
 - [x] `bosun_task`（02）：`KEY-N` 事务内分配、列表 `q` 走索引、`search/2` 按任务聚合 (T)
 - [x] `bosun_task_status`（03）：含 `REJECTED`、`CANCELLED`（BOS-10） (T)
 - [x] `bosun_feedback`（04）：不可变，`revise/2` 新条 + 旧条作废 (T)
-- [x] `bosun_search`（08）：bitcask jieba BM25，命中字段加权，组织 / 项目 / 类型过滤按 meta 下推引擎（bitcask 10.0.0），索引格式带版本、不符 / 打不开自动删目录重建，写后异步索引，启动重建 (T)
+- [x] `bosun_search`（08）：bitcask jieba BM25，标签 / 标题字段 boost，组织 / 项目 / 类型过滤按 meta 下推引擎（bitcask 12.0.0），索引格式带版本、不符 / 打不开自动删目录重建，写后异步索引，启动重建 (T)
 - [x] `bosun_bql` + `bosun_filter`（09） (T)
 - [x] `bosun_backup`（10） (T)
 
@@ -73,4 +73,5 @@
 
 ## 8. 依赖升级与全项目审查（2026-11-19）
 - [x] [bitcask 6.7.1 → 10.0.0](tasks/2026-11-19-bitcask-10-upgrade.md)：旧索引自动重建、`search_fields_attributed` 按命中字段加权、索引打不开不拦启动
+- [x] [bitcask 10.0.0 → 12.0.0](tasks/2026-11-20-bitcask-12-upgrade.md)：去掉按命中字段加权与 merge 词典路径两处绕法；标签命中不再必然排在标题命中前面
 - [x] [审查：缺陷修复与优化](tasks/2026-11-19-audit-fixes.md)：key 轮换越权、导入跨组织写、序号回退覆盖、BQL 500、Epic 级联、前端提示全哑等；没动的建议也列在里面

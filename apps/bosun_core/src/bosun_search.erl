@@ -24,12 +24,12 @@
 %%%
 %%% jieba 对拉丁词大小写敏感，入库与查询统一小写。
 %%%
-%%% 过滤（组织 / 项目 / 类型）按 meta 下推给引擎：`search_fields_attributed/4`、`search_wildcard/4`
+%%% 过滤（组织 / 项目 / 类型）按 meta 下推给引擎：`search_fields/4`、`search_wildcard/4`
 %%% 带 meta filter（bitcask 6.7.1 起），引擎会补取到 K 条，不再需要 Erlang 侧放大 K 再裁。
 %%%
-%%% 排序：引擎分数（默认字段 + title^3 + labels^8 相加）再乘「命中字段」系数（labels ×8、
-%%% title ×3，取大者）。bitcask 10 的命名字段子分数量级比默认字段小一截，只靠引擎内的
-%%% boost 相加压不过正文里的词频，所以用 `search_fields_attributed' 回报的命中字段显式加权。
+%%% 排序：直接用引擎分数——默认字段 + title^3 + labels^8 各子句相加。bitcask 11 起命名字段
+%%% 按字段自身的长度与跨段统计打分，标签 / 标题命中靠 boost 就能压过正文里的词频，
+%%% 不再需要在引擎外按命中字段另乘系数（bitcask 10 时期的绕法，升 12.0.0 时去掉）。
 %%%-------------------------------------------------------------------
 -module(bosun_search).
 -behaviour(gen_server).
@@ -47,9 +47,10 @@
 
 %% 索引格式版本；meta 结构变了、或引擎升级后旧索引不能沿用，就加一，旧索引启动时自动重建。
 %% 3：bitcask 6.7.1 → 10.0.0（8.1.0 起默认字段哨兵变了，旧封存段要重建）
+%% 10.0.0 → 12.0.0 盘上格式没变（本项目不写数组 meta，bitcask.meta 不会升 v7），不用加
 -define(SCHEMA, 3).
 
-%% 命中字段的排序系数（见模块头「排序」）
+%% 标签 / 标题字段的 boost（见模块头「排序」）
 -define(BOOST_LABELS, 8).
 -define(BOOST_TITLE, 3).
 
@@ -380,9 +381,9 @@ worth_merging(H, auto) ->
 %% 引擎只合并已经封口的文件，而死数据多半就在正在写的那个里（单文件 2 GB 才自动换），
 %% 所以先 close_write_file 把它封口（下一次写自动开新文件），再挑文件。
 %%
-%% 挑哪些文件自己按 `status' 定，不问 `needs_merge'：它用的是开库 / 上次合并时的统计，
-%% 本次打开之后才变成死数据的文件它看不见（bitcask 10.0.0 实测：文件 96% 是死的仍返回 false，
-%% 重开库才认）——照它说的做，长时间不重启的服务就永远不合并。
+%% 挑哪些文件按 `status' 的实时统计和这里自己的门槛定（见 merge_candidates/1），不用引擎的
+%% `needs_merge'：它的门槛是引擎的缺省值，和上面这套「死字节够多才动、小文件一并收」不是一回事。
+%% （bitcask 10 时 needs_merge 还看不见本次打开之后的死数据，11.1 已修，现在两者统计同源。）
 do_merge(#st{root = Root, gen = Gen, h = H}, Mode) ->
     Dir = gen_dir(Root, Gen),
     try
@@ -391,14 +392,12 @@ do_merge(#st{root = Root, gen = Gen, h = H}, Mode) ->
             true ->
                 {Before, _} = dead_bytes(H),
                 ok = bitcask:close_write_file(H),
-                case {merge_candidates(H), merge_opts()} of
-                    {[], _} -> {ok, not_needed};
-                    {_, {error, Reason}} ->
-                        logger:warning("bosun_search: merge skipped: ~p", [Reason]),
-                        {error, Reason};
-                    {Files, {ok, Opts}} ->
+                case merge_candidates(H) of
+                    [] -> {ok, not_needed};
+                    Files ->
                         T0 = erlang:monotonic_time(millisecond),
-                        case bitcask:merge(Dir, Opts, Files) of
+                        %% merge 另开一个只做合并的句柄，分词选项要和开库时一致
+                        case bitcask:merge(Dir, analyzer_opts(), Files) of
                             ok ->
                                 {After, _} = dead_bytes(H),
                                 logger:notice("bosun_search: merged ~b file(s), reclaimed ~b bytes in ~b ms",
@@ -426,21 +425,6 @@ merge_candidates(H) ->
                            Frag >= ?MERGE_FILE_FRAG_PERCENT orelse Total < ?MERGE_SMALL_FILE_BYTES]
             end;
         _ -> []
-    end.
-
-%% merge 是另开一个只做合并的句柄，分词选项要和开库时一致。
-%% ⚠️ `bitcask:open' 会替 jieba 补上缺省词典目录，`bitcask:merge' 不会（bitcask 10.0.0）——
-%% 不显式给 dict_path 的话 cppjieba 找不到词典直接 abort，整个节点跟着没。所以这里自己给，
-%% 并且先确认词典真的在；路径必须是 binary。
-merge_opts() ->
-    case code:priv_dir(bitcask) of
-        {error, _} -> {error, no_jieba_dict};
-        Priv ->
-            Dict = filename:join(Priv, "dict"),
-            case filelib:is_regular(filename:join(Dict, "jieba.dict.utf8")) of
-                true -> {ok, [{dict_path, unicode:characters_to_binary(Dict)} | analyzer_opts()]};
-                false -> {error, {no_jieba_dict, Dict}}
-            end
     end.
 
 fill(H) ->
@@ -484,27 +468,18 @@ filter(Org, Project, Kinds) ->
         _ -> Conds
     end.
 
-%% 一个词同时打默认字段与 title / labels 字段（bitcask `field:term^boost` 语法，各子句分数相加），
-%% 再按命中字段乘系数：命中标签 ×8、命中标题 ×3，正文 / feedback ×1。
+%% 一个词同时打默认字段与 title / labels 字段（bitcask `field:term^boost` 语法，各子句分数相加）。
 search_word(H, Word0, K, Filter) ->
     Word = binary:replace(Word0, [<<":">>, <<"^">>], <<>>, [global]),
     Expr = <<Word/binary, " title:", Word/binary, "^", (integer_to_binary(?BOOST_TITLE))/binary,
              " labels:", Word/binary, "^", (integer_to_binary(?BOOST_LABELS))/binary>>,
-    case Word =:= <<>> orelse bitcask:search_fields_attributed(H, Expr, K, Filter) of
+    case Word =:= <<>> orelse bitcask:search_fields(H, Expr, K, Filter) of
         true -> {ok, []};
         {ok, []} -> prefix_fallback(H, Word, K, Filter);
-        {ok, Hits} -> {ok, by_score([{Key, Ord, Score * field_boost(Fields)} || {Key, Ord, Score, Fields} <- Hits])};
         Other -> Other
     end.
 
-field_boost(Fields) ->
-    case {lists:member(<<"labels">>, Fields), lists:member(<<"title">>, Fields)} of
-        {true, _} -> ?BOOST_LABELS;
-        {false, true} -> ?BOOST_TITLE;
-        {false, false} -> 1
-    end.
-
-%% 分数降序；同分保持引擎给的先后（lists:sort 稳定）
+%% 分数降序；同分保持原有先后（lists:sort 稳定）
 by_score(Hits) ->
     lists:sort(fun({_, _, A}, {_, _, B}) -> A >= B end, Hits).
 
