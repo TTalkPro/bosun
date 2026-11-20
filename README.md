@@ -42,7 +42,7 @@ scripts/dev-run.sh          # 非交互，Ctrl-C 退出；scripts/dev-stop.sh �
 rebar3 shell                # 交互式
 ```
 
-打开 http://127.0.0.1:4000 ，先「注册组织」：填邮箱 → 收验证码 → 组织名 / 显示名 / 密码。没有配置 SMTP 时验证码打在服务端日志里（`bosun_mailer [log mode]`）。数据在 `data/mnesia/`，搜索索引在 `data/search/`（可删，启动自动重建）。
+打开 http://127.0.0.1:5000 ，先「注册组织」：填邮箱 → 收验证码 → 组织名 / 显示名 / 密码。没有配置 SMTP 时验证码打在服务端日志里（`bosun_mailer [log mode]`）。数据在 `data/mnesia/`，搜索索引在 `data/search/`（可删，启动自动重建）。
 
 ### 组织、用户与 API key
 
@@ -54,7 +54,7 @@ rebar3 shell                # 交互式
   `bin/bosun remote_console` → `bosun_org:adopt_orphans(<<"o1">>).`（开发时 `rebar3 shell` 同理；`o1` 是组织 id，「组织」页能看到）。
 - 邮件：`config/sys.config` 的 `{bosun_core, [{smtp, [...]}]}` 或环境变量 `BOSUN_SMTP_RELAY` / `BOSUN_SMTP_PORT` / `BOSUN_SMTP_USERNAME` / `BOSUN_SMTP_PASSWORD` / `BOSUN_SMTP_FROM`；有 relay 就走 SMTP（gen_smtp，STARTTLS if_available），否则日志模式。https 部署加 `BOSUN_COOKIE_SECURE=true`。
 
-前端开发（热更新，`/api` `/mcp` 代理到 4000）：
+前端开发（热更新，`/api` `/mcp` 代理到 5000）：
 
 ```bash
 cd web && pnpm dev          # http://localhost:5173
@@ -71,7 +71,7 @@ scripts/build-release.sh    # 前端 + rebar3 as prod tar → _build/prod/rel/bo
 | 变量 | 缺省 | 说明 |
 |---|---|---|
 | `BOSUN_HTTP_IP` | `127.0.0.1` | 监听地址 |
-| `BOSUN_HTTP_PORT` | `4000` | 端口 |
+| `BOSUN_HTTP_PORT` | `5000` | 端口 |
 | `BOSUN_DATA_DIR` | `data`（相对 release 根） | mnesia 与搜索索引目录 |
 | `BOSUN_SMTP_RELAY` `BOSUN_SMTP_PORT` `BOSUN_SMTP_USERNAME` `BOSUN_SMTP_PASSWORD` `BOSUN_SMTP_FROM` | 无（日志模式） | 注册验证码邮件 |
 | `BOSUN_COOKIE_SECURE` | `false` | https 部署设 `true`，登录 Cookie 加 `Secure` |
@@ -80,6 +80,18 @@ scripts/build-release.sh    # 前端 + rebar3 as prod tar → _build/prod/rel/bo
 ### systemd
 
 `deploy/bosun.service` + `deploy/bosun.env`（安装步骤写在 unit 文件头部）：解压到 `/opt/bosun`，数据放 `/var/lib/bosun`，`systemctl enable --now bosun`，日志 `journalctl -u bosun -f`。
+
+### Docker Compose
+
+根目录 `Dockerfile` + `docker-compose.yml`：多阶段构建（前端 → rebar3 release → slim 运行镜像），数据放在命名卷 `bosun-data`：
+
+```bash
+docker compose up -d --build        # 首次构建较久（bitcask 的 C++ NIF 要编一遍）
+docker compose logs -f bosun        # 日志（未配 SMTP 时验证码在这里）
+docker compose down                 # 数据在卷里，不会丢
+```
+
+宿主机默认端口 5000（`BOSUN_HTTP_PORT` 变量或直接改 `ports`）。SMTP / `BOSUN_COOKIE_SECURE` / `BOSUN_TRUST_PROXY` 等都在 `docker-compose.yml` 的 `environment` 里改。MCP 地址相应是 `http://127.0.0.1:5000/mcp`。
 
 ### FreeBSD
 
@@ -96,7 +108,7 @@ scripts/build-release.sh    # 前端 + rebar3 as prod tar → _build/prod/rel/bo
 ```bash
 export BOSUN_API_KEY=bsk_...          # 放进 shell 配置；每个人用自己的
 # 用户级（所有项目可用）
-claude mcp add --transport http --scope user bosun http://127.0.0.1:4000/mcp \
+claude mcp add --transport http --scope user bosun http://127.0.0.1:5000/mcp \
   --header "Authorization: Bearer ${BOSUN_API_KEY}"
 # 或项目级：在目标仓库根目录写 .mcp.json（可提交，队友共享；key 走环境变量，不进仓库）
 ```
@@ -104,7 +116,7 @@ claude mcp add --transport http --scope user bosun http://127.0.0.1:4000/mcp \
 `.mcp.json`：
 
 ```json
-{ "mcpServers": { "bosun": { "type": "http", "url": "http://127.0.0.1:4000/mcp",
+{ "mcpServers": { "bosun": { "type": "http", "url": "http://127.0.0.1:5000/mcp",
                              "headers": { "Authorization": "Bearer ${BOSUN_API_KEY}" } } } }
 ```
 

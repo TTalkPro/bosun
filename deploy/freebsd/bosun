@@ -7,7 +7,7 @@
 #   mkdir -p /usr/local/bosun /var/db/bosun && tar xzf bosun-0.1.0.tar.gz -C /usr/local/bosun
 #   chown -R bosun:bosun /usr/local/bosun /var/db/bosun
 #   install -m 555 deploy/freebsd/bosun /usr/local/etc/rc.d/bosun
-#   sysrc bosun_enable=YES            # 其余变量按需 sysrc bosun_http_port=4000 ...
+#   sysrc bosun_enable=YES            # 其余变量按需 sysrc bosun_http_port=5000 ...
 #   service bosun start
 #   tail -f /var/log/bosun/bosun.log
 #
@@ -17,7 +17,7 @@
 #   bosun_root        (/usr/local/bosun)  release 解压目录（含 bin/bosun）
 #   bosun_data_dir    (/var/db/bosun)     数据目录 → BOSUN_DATA_DIR（mnesia/ 与 search/ 都在下面）
 #   bosun_http_ip     (127.0.0.1)         → BOSUN_HTTP_IP
-#   bosun_http_port   (4000)              → BOSUN_HTTP_PORT
+#   bosun_http_port   (5000)              → BOSUN_HTTP_PORT
 #   bosun_log         (/var/log/bosun/bosun.log)  stdout/stderr 落这里；设为 "syslog" 则改走 syslog
 #   bosun_env         ()                  额外环境变量，如 "FOO=1 BAR=2"
 #
@@ -39,7 +39,7 @@ load_rc_config $name
 : ${bosun_root:="/usr/local/bosun"}
 : ${bosun_data_dir:="/var/db/bosun"}
 : ${bosun_http_ip:="127.0.0.1"}
-: ${bosun_http_port:="4000"}
+: ${bosun_http_port:="5000"}
 : ${bosun_log:="/var/log/bosun/bosun.log"}
 : ${bosun_env:=""}
 

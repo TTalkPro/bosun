@@ -1,0 +1,33 @@
+services:
+  bosun:
+    build: .
+    image: bosun:local
+    container_name: bosun
+    restart: unless-stopped
+    ports:
+      - "${BOSUN_HTTP_PORT:-5000}:5000"
+    environment:
+      BOSUN_HTTP_IP: 0.0.0.0
+      BOSUN_HTTP_PORT: 5000
+      BOSUN_DATA_DIR: /var/lib/bosun
+      # https 部署（前面有反代做 TLS）设 true：登录 Cookie 加 Secure
+      #BOSUN_COOKIE_SECURE: "true"
+      # 前面有反向代理时设 true：限流按 X-Forwarded-For 最右一项算来源 IP；没有代理别开
+      #BOSUN_TRUST_PROXY: "true"
+      # SMTP（不配则验证码打在容器日志里，docker compose logs -f bosun 可看）
+      #BOSUN_SMTP_RELAY: smtp.example.com
+      #BOSUN_SMTP_PORT: "587"
+      #BOSUN_SMTP_USERNAME: bosun@example.com
+      #BOSUN_SMTP_PASSWORD: secret
+      #BOSUN_SMTP_FROM: bosun@example.com
+    volumes:
+      - bosun-data:/var/lib/bosun
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  bosun-data:

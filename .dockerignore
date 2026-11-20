@@ -1,0 +1,28 @@
+# git
+.git
+
+# Erlang / rebar3
+_build/
+_checkouts/
+*.beam
+*.plt
+erl_crash.dump
+rebar3.crashdump
+MnesiaCore.*
+
+# 数据与前端构建产物（容器里自己构建）
+data/
+web/node_modules/
+apps/bosun_web/priv/static/
+apps/bosun_core/priv/workflow/
+
+# 杂项
+logs/
+designs/
+tasks/
+.claude/
+.playwright-mcp/
+.DS_Store
+.idea/
+.vscode/
+*.swp

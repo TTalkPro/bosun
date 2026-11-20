@@ -13,7 +13,7 @@ start_link() ->
 init([]) ->
     %% 环境变量优先：BOSUN_HTTP_IP / BOSUN_HTTP_PORT（release 部署时不用改 sys.config）
     Ip = env_ip(application:get_env(bosun_web, ip, {127,0,0,1})),
-    Port = env_int("BOSUN_HTTP_PORT", application:get_env(bosun_web, port, 4000)),
+    Port = env_int("BOSUN_HTTP_PORT", application:get_env(bosun_web, port, 5000)),
     Dispatch = bosun_web_router:dispatch(),
     {ok, _} = cowboy:start_clear(bosun_http,
                                  [{ip, Ip}, {port, Port}],

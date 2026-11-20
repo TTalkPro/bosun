@@ -4,7 +4,7 @@
 
 ## 工单
 
-本仓库自己的工单在 Bosun 项目 **`BOS`**（通过 `.mcp.json` 连到本机 :4000 的 MCP）。
+本仓库自己的工单在 Bosun 项目 **`BOS`**（通过 `.mcp.json` 连到本机 :5000 的 MCP）。
 规则见 @docs/AGENT-WORKFLOW.md。会话开始先 `identify(name="bos/<worktree>", kind="agent", project="BOS")`；
 先读工单（`get_task`），`transition_task` 到 IN_PROGRESS 再动手；完成后跑测试、`add_feedback(kind=comment)`
 写清改了什么，再 `transition_task(DONE, commits=[...], tests={...})`；需要人拍板用 `kind=question` 并停下。
