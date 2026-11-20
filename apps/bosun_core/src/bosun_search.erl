@@ -9,12 +9,18 @@
 %%%   fb:<ID>     text = content                        meta {v, org, project, kind=feedback, task}
 %%%
 %%% `org' 取自项目的 org_id（孤儿项目为 null）；项目改组织（`bosun_org:adopt_orphans/1'）后要 reindex。
-%%% `v' 是索引格式版本（?SCHEMA）：启动时抽一篇文档看版本，不对就全量重建。
+%%% `v' 是索引格式版本（?SCHEMA）：启动时抽一篇文档看版本，不对就**删掉索引目录**从 Mnesia
+%%% 全量重建（bitcask 8.1.0 改了默认字段的盘上标识，旧版本写的封存段不能沿用，逐 key 删不干净）。
+%%% 索引目录打不开（损坏 / 版本不兼容）同样删掉重建一次——索引是派生数据，不该拦住启动。
 %%%
 %%% jieba 对拉丁词大小写敏感，入库与查询统一小写。
 %%%
-%%% 过滤（组织 / 项目 / 类型）按 meta 下推给引擎：`search_fields/4`、`search_wildcard/4`
+%%% 过滤（组织 / 项目 / 类型）按 meta 下推给引擎：`search_fields_attributed/4`、`search_wildcard/4`
 %%% 带 meta filter（bitcask 6.7.1 起），引擎会补取到 K 条，不再需要 Erlang 侧放大 K 再裁。
+%%%
+%%% 排序：引擎分数（默认字段 + title^3 + labels^8 相加）再乘「命中字段」系数（labels ×8、
+%%% title ×3，取大者）。bitcask 10 的命名字段子分数量级比默认字段小一截，只靠引擎内的
+%%% boost 相加压不过正文里的词频，所以用 `search_fields_attributed' 回报的命中字段显式加权。
 %%%-------------------------------------------------------------------
 -module(bosun_search).
 -behaviour(gen_server).
@@ -27,8 +33,13 @@
 
 -record(st, {dir :: string(), h :: term()}).
 
-%% 索引格式版本；meta 结构变了就加一，旧索引启动时自动重建
--define(SCHEMA, 2).
+%% 索引格式版本；meta 结构变了、或引擎升级后旧索引不能沿用，就加一，旧索引启动时自动重建。
+%% 3：bitcask 6.7.1 → 10.0.0（8.1.0 起默认字段哨兵变了，旧封存段要重建）
+-define(SCHEMA, 3).
+
+%% 命中字段的排序系数（见模块头「排序」）
+-define(BOOST_LABELS, 8).
+-define(BOOST_TITLE, 3).
 
 -type hit() :: #{type := task | feedback, id := binary(), task_id := binary(), score := float()}.
 -export_type([hit/0]).
@@ -95,13 +106,12 @@ call(Msg) ->
 
 init(Dir) ->
     process_flag(trap_exit, true),
-    ok = filelib:ensure_path(Dir),
-    case open(Dir) of
-        {ok, H} ->
+    case open_fresh_if_needed(Dir) of
+        {ok, H, Rebuild} ->
             St = #st{dir = Dir, h = H},
-            case bitcask:is_empty_estimate(H) orelse stale(H) of
+            case Rebuild orelse bitcask:is_empty_estimate(H) of
                 true ->
-                    {ok, N} = do_reindex(St),
+                    {ok, N} = fill(H),
                     logger:notice("bosun_search: built index from mnesia (~b docs)", [N]);
                 false -> ok
             end,
@@ -113,7 +123,10 @@ init(Dir) ->
 handle_call({search, Query, Opts}, _From, #st{h = H} = St) ->
     {reply, do_search(H, Query, Opts), St};
 handle_call(reindex, _From, St) ->
-    {reply, do_reindex(St), St};
+    case do_reindex(St) of
+        {ok, N, St1} -> {reply, {ok, N}, St1};
+        {error, Reason} -> {stop, {search_reindex_failed, Reason}, {error, search_unavailable}, St#st{h = undefined}}
+    end;
 handle_call(reset, _From, #st{h = H} = St) ->
     lists:foreach(fun(K) -> bitcask:delete(H, K) end, keys(H)),
     {reply, ok, St};
@@ -136,6 +149,8 @@ handle_cast({remove, Key}, #st{h = H} = St) ->
 handle_cast(_Msg, St) ->
     {noreply, St}.
 
+terminate(_Reason, #st{h = undefined}) ->
+    ok;
 terminate(_Reason, #st{h = H}) ->
     catch bitcask:close(H),
     ok.
@@ -146,20 +161,73 @@ terminate(_Reason, #st{h = H}) ->
 
 open(Dir) ->
     _ = application:ensure_all_started(bitcask),
-    case bitcask:open(Dir, [read_write, {analyzer, jieba}, {enable_stop_words, true}]) of
+    ok = filelib:ensure_path(Dir),
+    try bitcask:open(Dir, [read_write, {analyzer, jieba}, {enable_stop_words, true}]) of
         {error, Reason} -> {error, Reason};
         H -> {ok, H}
+    catch
+        Class:Reason -> {error, {Class, Reason}}
     end.
+
+%% 打开索引；打不开或格式版本不对就删目录重开。返回 {ok, H, 要不要全量灌}。
+open_fresh_if_needed(Dir) ->
+    case open(Dir) of
+        {ok, H} ->
+            case stale(H) of
+                false -> {ok, H, false};
+                true ->
+                    logger:notice("bosun_search: index format is stale, rebuilding ~ts", [Dir]),
+                    catch bitcask:close(H),
+                    reopen_empty(Dir)
+            end;
+        {error, Reason} ->
+            logger:warning("bosun_search: cannot open ~ts (~p), rebuilding from mnesia", [Dir, Reason]),
+            reopen_empty(Dir)
+    end.
+
+reopen_empty(Dir) ->
+    case wipe(Dir) of
+        ok ->
+            case open(Dir) of
+                {ok, H} -> {ok, H, true};
+                {error, _} = E -> E
+            end;
+        {error, _} = E -> E
+    end.
+
+%% 删掉索引目录。只删看起来确实是 bitcask 目录（或空目录）的路径，
+%% 免得 search_dir 配错时把别的东西删了。
+wipe(Dir) ->
+    case file:list_dir(Dir) of
+        {error, enoent} -> ok;
+        {ok, []} -> ok;
+        {ok, Names} ->
+            case lists:any(fun is_cask_file/1, Names) of
+                true ->
+                    case file:del_dir_r(Dir) of
+                        ok -> ok;
+                        {error, R} -> {error, {wipe_failed, R}}
+                    end;
+                false -> {error, {not_a_search_index, Dir}}
+            end;
+        {error, R} -> {error, {wipe_failed, R}}
+    end.
+
+is_cask_file("bitcask.meta") -> true;
+is_cask_file("bitcask.write.lock") -> true;
+is_cask_file(Name) -> lists:suffix(".bitcask.data", Name).
 
 %% 抽一篇文档看 meta 里的格式版本
 stale(H) ->
     case keys(H) of
         [] -> false;
         [K | _] ->
-            case bitcask:get(H, K) of
+            try bitcask:get(H, K) of
                 {ok, #{meta := Meta}} when is_binary(Meta), Meta =/= <<>> ->
                     maps:get(<<"v">>, bitcask:decode_meta(Meta), undefined) =/= ?SCHEMA;
                 _ -> true
+            catch
+                _:_ -> true
             end
     end.
 
@@ -169,8 +237,20 @@ keys(H) ->
         _ -> []
     end.
 
-do_reindex(#st{h = H}) ->
-    lists:foreach(fun(K) -> bitcask:delete(H, K) end, keys(H)),
+%% 全量重建：关库、删目录、重开、从 Mnesia 灌。逐 key 删再写会让数据文件只增不减
+%% （这里从不 merge），删目录重建既干净又不留旧格式的段。
+do_reindex(#st{dir = Dir, h = H} = St) ->
+    catch bitcask:close(H),
+    case reopen_empty(Dir) of
+        {ok, H1, _} ->
+            {ok, N} = fill(H1),
+            {ok, N, St#st{h = H1}};
+        {error, Reason} ->
+            logger:error("bosun_search: reindex failed: ~p", [Reason]),
+            {error, Reason}
+    end.
+
+fill(H) ->
     Tasks = mnesia:dirty_select(task, [{'_', [], ['$_']}]),
     Fbs = mnesia:dirty_select(feedback, [{'_', [], ['$_']}]),
     Docs = [task_doc(bosun_json:task_full(T, [])) || T <- Tasks]
@@ -196,7 +276,7 @@ do_search(H, Query, Opts) ->
               _ -> intersect([search_word(H, W, K * 8, Filter) || W <- Words])
           end,
     case Res of
-        {ok, Hits} -> {ok, lists:sublist([to_hit(Hit) || Hit <- Hits], Limit)};
+        {ok, Hits} -> {ok, lists:sublist(lists:filtermap(fun to_hit/1, Hits), Limit)};
         {error, _} = E -> E
     end.
 
@@ -211,16 +291,29 @@ filter(Org, Project, Kinds) ->
         _ -> Conds
     end.
 
-%% 一个词同时打默认字段与 title / labels 字段：标签命中权重 ×8、标题 ×3，
-%% 正文 / feedback 只在默认字段里 ×1（bitcask `field:term^boost` 语法，各子句分数相加）。
+%% 一个词同时打默认字段与 title / labels 字段（bitcask `field:term^boost` 语法，各子句分数相加），
+%% 再按命中字段乘系数：命中标签 ×8、命中标题 ×3，正文 / feedback ×1。
 search_word(H, Word0, K, Filter) ->
     Word = binary:replace(Word0, [<<":">>, <<"^">>], <<>>, [global]),
-    Expr = <<Word/binary, " title:", Word/binary, "^3 labels:", Word/binary, "^8">>,
-    case Word =:= <<>> orelse bitcask:search_fields(H, Expr, K, Filter) of
+    Expr = <<Word/binary, " title:", Word/binary, "^", (integer_to_binary(?BOOST_TITLE))/binary,
+             " labels:", Word/binary, "^", (integer_to_binary(?BOOST_LABELS))/binary>>,
+    case Word =:= <<>> orelse bitcask:search_fields_attributed(H, Expr, K, Filter) of
         true -> {ok, []};
         {ok, []} -> prefix_fallback(H, Word, K, Filter);
+        {ok, Hits} -> {ok, by_score([{Key, Ord, Score * field_boost(Fields)} || {Key, Ord, Score, Fields} <- Hits])};
         Other -> Other
     end.
+
+field_boost(Fields) ->
+    case {lists:member(<<"labels">>, Fields), lists:member(<<"title">>, Fields)} of
+        {true, _} -> ?BOOST_LABELS;
+        {false, true} -> ?BOOST_TITLE;
+        {false, false} -> 1
+    end.
+
+%% 分数降序；同分保持引擎给的先后（lists:sort 稳定）
+by_score(Hits) ->
+    lists:sort(fun({_, _, A}, {_, _, B}) -> A >= B end, Hits).
 
 %% 单个拉丁词没命中时按前缀再试一次（"crea" → create）
 prefix_fallback(H, Word, K, Filter) ->
@@ -238,19 +331,16 @@ intersect(Results) ->
             Common = lists:foldl(fun(M, Acc) -> maps:with(maps:keys(M), Acc) end, hd(Maps), tl(Maps)),
             Summed = [{Key, Ord, lists:sum([element(2, maps:get(Key, M)) || M <- Maps])}
                       || {Key, {Ord, _}} <- maps:to_list(Common)],
-            {ok, lists:sort(fun({_, _, A}, {_, _, B}) -> A >= B end, Summed)}
+            {ok, by_score(Summed)}
     end.
 
-to_hit({Key, _Ord, Score}) ->
-    {Type, Id} = id_of(Key),
-    TaskId = case Type of
-                 task -> Id;
-                 feedback -> hd(binary:split(Id, <<"#">>))
-             end,
-    #{type => Type, id => Id, task_id => TaskId, score => Score}.
-
-id_of(<<"task:", Id/binary>>) -> {task, Id};
-id_of(<<"fb:", Id/binary>>) -> {feedback, Id}.
+%% 不认识的 key（不是本模块写的）直接跳过
+to_hit({<<"task:", Id/binary>>, _Ord, Score}) ->
+    {true, #{type => task, id => Id, task_id => Id, score => Score}};
+to_hit({<<"fb:", Id/binary>>, _Ord, Score}) ->
+    {true, #{type => feedback, id => Id, task_id => hd(binary:split(Id, <<"#">>)), score => Score}};
+to_hit(_) ->
+    false.
 
 project_of(Id) -> hd(binary:split(Id, <<"-">>)).
 

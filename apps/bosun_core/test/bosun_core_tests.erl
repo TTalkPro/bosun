@@ -28,6 +28,8 @@ core_test_() ->
         {"roles, commits, tests & self-verify", fun roles_and_evidence/0},
         {"epics", fun epics/0},
         {"epic auto flow", fun epic_auto_flow/0},
+        {"search ranks label > title > body", fun search_field_ranking/0},
+        {"search index rebuilt when unopenable or not ours", fun search_index_recovery/0},
         {"links", fun links/0}
     ],
     {foreach, fun setup/0, fun teardown/1,
@@ -381,6 +383,57 @@ stale_search_index() ->
     ?assertMatch(#{docs := 1}, bosun_search:status()),
     {ok, []} = bosun_search:search(<<"ghost">>, #{}),
     {ok, [#{id := <<"STL-1">>}]} = bosun_search:search(<<"fresh">>, #{}).
+
+%% bitcask 10 下命名字段的子分数比默认字段小一截：靠命中字段显式加权，
+%% 标签命中 > 标题命中 > 正文里词频再高也排后面
+search_field_ranking() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"RNK">>, <<"name">> => <<"r">>}),
+    {ok, _} = bosun_task:create(<<"RNK">>, #{<<"title">> => <<"body only">>,
+                                             <<"description">> => <<"zebra zebra zebra zebra zebra">>}),
+    {ok, _} = bosun_task:create(<<"RNK">>, #{<<"title">> => <<"about the zebra crossing">>,
+                                             <<"description">> => <<"some long unrelated text to dilute the score ">>}),
+    {ok, _} = bosun_task:create(<<"RNK">>, #{<<"title">> => <<"labelled">>, <<"labels">> => [<<"zebra">>],
+                                             <<"description">> => <<"some long unrelated text to dilute the score ">>}),
+    {ok, _} = bosun_feedback:add(<<"RNK-1">>, #{<<"content">> => <<"zebra in a comment">>}),
+    ok = bosun_search:sync(),
+    {ok, #{<<"hits">> := Hits}} = bosun_task:search(<<"zebra">>, #{}),
+    ?assertEqual([<<"RNK-3">>, <<"RNK-2">>, <<"RNK-1">>], [maps:get(<<"id">>, maps:get(<<"task">>, H)) || H <- Hits]),
+    %% 多词 AND 仍然成立
+    {ok, #{<<"hits">> := [#{<<"task">> := #{<<"id">> := <<"RNK-2">>}}]}} = bosun_task:search(<<"zebra crossing">>, #{}).
+
+%% 索引是派生数据：目录打不开就删掉重建，不拦启动；但不是索引的目录绝不动
+search_index_recovery() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"REC">>, <<"name">> => <<"r">>}),
+    {ok, _} = bosun_task:create(<<"REC">>, #{<<"title">> => <<"survivor">>}),
+    ok = bosun_search:sync(),
+    ok = gen_server:stop(bosun_search),
+    Stamp = integer_to_list(erlang:system_time(millisecond)),
+    %% 不是 bitcask 目录（里面有别的文件）：拒绝清空，启动失败，文件原样
+    Foreign = filename:join(["/tmp", "bosun_test_foreign_" ++ Stamp]),
+    ok = filelib:ensure_path(Foreign),
+    ok = file:write_file(filename:join(Foreign, "precious.txt"), <<"do not delete">>),
+    ok = file:write_file(filename:join(Foreign, "1.bitcask.hint"), <<"garbage">>),
+    process_flag(trap_exit, true),
+    case bosun_search:start_link(Foreign) of
+        {ok, P0} ->
+            %% 引擎愿意在这个目录里开库也行——关键是别的文件还在
+            unlink(P0), ok = gen_server:stop(bosun_search);
+        {error, _} -> receive {'EXIT', _, _} -> ok after 0 -> ok end
+    end,
+    process_flag(trap_exit, false),
+    ?assertEqual({ok, <<"do not delete">>}, file:read_file(filename:join(Foreign, "precious.txt"))),
+    %% reindex：删目录重建后照常可搜
+    Dir = filename:join(["/tmp", "bosun_test_rec_" ++ Stamp]),
+    {ok, Pid} = bosun_search:start_link(Dir),
+    unlink(Pid),
+    ?assertMatch(#{docs := 1}, bosun_search:status()),
+    {ok, 1} = bosun_search:reindex(),
+    {ok, 1} = bosun_search:reindex(),
+    ?assertMatch(#{docs := 1}, bosun_search:status()),
+    {ok, [#{id := <<"REC-1">>}]} = bosun_search:search(<<"survivor">>, #{}),
+    {ok, _} = bosun_task:create(<<"REC">>, #{<<"title">> => <<"latecomer">>}),
+    ok = bosun_search:sync(),
+    {ok, [#{id := <<"REC-2">>}]} = bosun_search:search(<<"latecomer">>, #{}).
 
 workflow_doc() ->
     {ok, Zh} = bosun_workflow:doc(),

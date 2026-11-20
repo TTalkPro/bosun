@@ -15,7 +15,7 @@
 - [x] `bosun_task`（02）：`KEY-N` 事务内分配、列表 `q` 走索引、`search/2` 按任务聚合 (T)
 - [x] `bosun_task_status`（03）：含 `REJECTED`、`CANCELLED`（BOS-10） (T)
 - [x] `bosun_feedback`（04）：不可变，`revise/2` 新条 + 旧条作废 (T)
-- [x] `bosun_search`（08）：bitcask jieba BM25，fields 加权，组织 / 项目 / 类型过滤按 meta 下推引擎（bitcask 6.7.1），索引格式带版本、不符自动重建，写后异步索引，启动重建 (T)
+- [x] `bosun_search`（08）：bitcask jieba BM25，命中字段加权，组织 / 项目 / 类型过滤按 meta 下推引擎（bitcask 10.0.0），索引格式带版本、不符 / 打不开自动删目录重建，写后异步索引，启动重建 (T)
 - [x] `bosun_bql` + `bosun_filter`（09） (T)
 - [x] `bosun_backup`（10） (T)
 
@@ -70,3 +70,6 @@
 - [x] [Epic 子任务 Kanban](tasks/2026-10-28-epic-kanban.md)：状态列拖拽、乐观更新、blocked / open question 可视化
 - [x] [API Key 安全轮换与审计](tasks/2026-10-28-api-key-rotation.md)：保留权限配置和历史，旧秘密值立即失效
 - [x] [shadcn/Tailwind 全量迁移](tasks/2026-10-28-shadcn-migration.md)：移除 MUI compat 与 DataGrid，前端保留 React + shadcn
+
+## 8. 依赖升级与全项目审查（2026-11-19）
+- [x] [bitcask 6.7.1 → 10.0.0](tasks/2026-11-19-bitcask-10-upgrade.md)：旧索引自动重建、`search_fields_attributed` 按命中字段加权、索引打不开不拦启动
