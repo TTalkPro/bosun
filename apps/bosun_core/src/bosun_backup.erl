@@ -9,7 +9,9 @@
 %%% 作用域（13）：有组织主体时只导出本组织的项目 / 任务 / 反馈 / 关联 / 筛选器 / 操作者，
 %%% 导入把项目 / 筛选器 / 操作者打上本组织（筛选器换新 id 免得撞别的组织），别的组织已占的
 %%% 项目 key 报 {conflict, key}；replace 只清本组织的数据；计数器只在系统作用域下导入。
-%%% 用户 / 会话 / API key 不进导出。
+%%% 用户 / 会话 / API key / 组织本身不进导出。项目 / 筛选器 / 操作者的 `org_id' 会写进文件，
+%%% 但只有**系统作用域**（shell、`export_file' / `import_file'）导入时才采信——不然整库备份
+%%% 还原后所有项目都成了孤儿；组织作用域下一律打成当前组织。
 %%%-------------------------------------------------------------------
 -module(bosun_backup).
 
@@ -27,8 +29,8 @@
 -spec export() -> {ok, map()}.
 export() ->
     Org = bosun_scope:org_id(),
-    Projects = [P || #project{org_id = O} = P <- mnesia:dirty_select(project, [{'_', [], ['$_']}]),
-                     Org =:= undefined orelse O =:= Org],
+    Projects = [P || #project{org_id = O, key = K} = P <- mnesia:dirty_select(project, [{'_', [], ['$_']}]),
+                     Org =:= undefined orelse (O =:= Org andalso bosun_scope:project_allowed(K))],
     Keys = maps:from_list([{P#project.key, true} || P <- Projects]),
     Tasks = [T || T <- mnesia:dirty_select(task, [{'_', [], ['$_']}]),
                   Org =:= undefined orelse maps:is_key(T#task.project_key, Keys)],
@@ -66,6 +68,7 @@ sort_by(Pos, Recs) -> lists:sort(fun(A, B) -> element(Pos, A) =< element(Pos, B)
 project_out(#project{} = P) ->
     #{<<"key">> => P#project.key, <<"name">> => P#project.name, <<"description">> => P#project.description,
       <<"task_seq">> => P#project.task_seq, <<"archived">> => P#project.archived,
+      <<"org_id">> => P#project.org_id,
       <<"created_at">> => P#project.created_at, <<"updated_at">> => P#project.updated_at}.
 
 task_out(#task{} = T) ->
@@ -104,10 +107,12 @@ link_out(#link{from = From, to = To, type = Type, actor = Actor, created_at = At
 actor_out(#actor{} = A) ->
     #{<<"name">> => A#actor.name, <<"kind">> => atom_to_binary(A#actor.kind, utf8),
       <<"project">> => A#actor.project, <<"worktree">> => A#actor.worktree,
+      <<"org_id">> => A#actor.org_id,
       <<"first_seen">> => A#actor.first_seen, <<"last_seen">> => A#actor.last_seen}.
 
 filter_out(#filter{} = F) ->
     #{<<"id">> => F#filter.id, <<"name">> => F#filter.name, <<"query">> => F#filter.query,
+      <<"org_id">> => F#filter.org_id,
       <<"created_at">> => F#filter.created_at, <<"updated_at">> => F#filter.updated_at}.
 
 %%====================================================================
@@ -115,21 +120,34 @@ filter_out(#filter{} = F) ->
 %%====================================================================
 
 %% @doc Opts: #{mode => replace | merge}（缺省 merge）
+%%
+%% 文件内容不可信（组织管理员上传的任意 JSON），写库前先过三道：
+%%   1. 形状：字段类型不对直接拒绝（以前原样落库，之后列表 / 详情一读就 500）；
+%%   2. 归属：任务 id 必须是 `<project_key>-<seq>'，反馈 id 必须是 `<task_id>#<seq>'，任务 / 反馈 / 关联
+%%      指向的项目必须是本次导入的项目或本作用域里已有的项目——否则组织 A 的管理员能用一个
+%%      写着组织 B 项目 key 的文件覆盖 B 的任务；
+%%   3. 序号：项目的 task_seq、任务的 feedback_seq 取「文件里的、库里已有的、实际最大序号」三者
+%%      最大值——merge 一个旧导出时序号不会回退（回退后新建的任务会和已有任务撞号）。
 -spec import(map(), map()) -> {ok, map()} | {error, term()}.
 import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1; V =:= 2 ->
     Mode = maps:get(mode, Opts, merge),
     Org = bosun_scope:org_id(),
     try
-        Projects = [(project_in(P))#project{org_id = Org} || P <- maps:get(<<"projects">>, Data, [])],
-        Tasks = [task_in(T) || T <- maps:get(<<"tasks">>, Data, [])],
-        Fbs = [feedback_in(F) || F <- maps:get(<<"feedback">>, Data, [])],
-        Filters0 = [(filter_in(F))#filter{org_id = Org} || F <- maps:get(<<"filters">>, Data, [])],
-        Actors = [(actor_in(A))#actor{org_id = Org} || A <- maps:get(<<"actors">>, Data, [])],
-        Links = [link_in(L) || L <- maps:get(<<"links">>, Data, [])],
+        Projects = [(project_in(P))#project{org_id = org_in(P, Org)} || P <- list_in(<<"projects">>, Data)],
+        Tasks = [task_in(T) || T <- list_in(<<"tasks">>, Data)],
+        Fbs = [feedback_in(F) || F <- list_in(<<"feedback">>, Data)],
+        Filters0 = [(filter_in(F))#filter{org_id = org_in(F, Org)} || F <- list_in(<<"filters">>, Data)],
+        Actors = [(actor_in(A))#actor{org_id = org_in(A, Org)} || A <- list_in(<<"actors">>, Data)],
+        Links = [link_in(L) || L <- list_in(<<"links">>, Data)],
         Counters = case Org of
-                       undefined -> [{binary_to_atom(K, utf8), N} || {K, N} <- maps:to_list(maps:get(<<"counters">>, Data, #{})), is_integer(N)];
+                       undefined -> [{counter_in(K), N} || {K, N} <- maps:to_list(map_in(<<"counters">>, Data)), is_integer(N)];
                        _ -> []
                    end,
+        Imported = maps:from_list([{P#project.key, P} || P <- Projects]),
+        %% 任务 / 反馈 / 关联牵涉到的项目 key
+        Referenced = lists:usort([T#task.project_key || T <- Tasks]
+                                 ++ [project_of(F#feedback.task_id) || F <- Fbs]
+                                 ++ lists:append([[project_of(L#link.from), project_of(L#link.to)] || L <- Links])),
         Res = bosun_store:transaction(fun() ->
             case {Mode, Org} of
                 {replace, undefined} ->
@@ -138,19 +156,58 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
                 {replace, _} -> delete_org_data(Org);
                 {merge, _} -> ok
             end,
-            %% 别的组织已占的 key 不能覆盖
-            lists:foreach(fun(#project{key = K}) ->
+            %% 别的组织已占的 key 不能覆盖；库里已有的同 key 项目留着比序号用
+            Existing = lists:foldl(fun(K, Acc) ->
                 case mnesia:read(project, K, write) of
-                    [#project{org_id = O}] when Org =/= undefined, O =/= Org -> bosun_store:abort({conflict, key});
-                    _ -> ok
+                    [#project{org_id = O}] when Org =/= undefined, O =/= Org ->
+                        case maps:is_key(K, Imported) of
+                            true -> bosun_store:abort({conflict, key});
+                            false -> bosun_store:abort({invalid, data, <<"refers to unknown project ", K/binary>>})
+                        end;
+                    [P] -> Acc#{K => P};
+                    [] ->
+                        case maps:is_key(K, Imported) of
+                            true -> Acc;
+                            false -> bosun_store:abort({invalid, data, <<"refers to unknown project ", K/binary>>})
+                        end
                 end
-            end, Projects),
+            end, #{}, lists:usort(maps:keys(Imported) ++ Referenced)),
             %% 组织作用域下筛选器换新 id（旧 id 可能是别的组织的）
             Filters = case Org of
                           undefined -> Filters0;
                           _ -> [F#filter{id = <<"f", (integer_to_binary(bosun_store:next_id(filter)))/binary>>} || F <- Filters0]
                       end,
-            lists:foreach(fun(R) -> ok = mnesia:write(R) end, Projects ++ Tasks ++ Fbs ++ Filters ++ Actors ++ Links),
+            %% 操作者的名字是全局主键：别的组织已经登记的名字不动（不然等于把人家的操作者划过来）
+            Actors1 = case Org of
+                          undefined -> Actors;
+                          _ -> [A || A <- Actors, actor_free(A#actor.name, Org)]
+                      end,
+            %% 反馈挂的任务：要么在文件里，要么库里已有
+            ImportedTasks = maps:from_list([{T#task.id, T} || T <- Tasks]),
+            ExistingTasks = lists:foldl(fun(Id, Acc) ->
+                case mnesia:read(task, Id, write) of
+                    [T] -> Acc#{Id => T};
+                    [] ->
+                        case maps:is_key(Id, ImportedTasks) of
+                            true -> Acc;
+                            false -> bosun_store:abort({invalid, data, <<"feedback refers to unknown task ", Id/binary>>})
+                        end
+                end
+            end, #{}, lists:usort(maps:keys(ImportedTasks) ++ [F#feedback.task_id || F <- Fbs])),
+            %% 序号只进不退
+            MaxTaskSeq = max_by([{T#task.project_key, T#task.seq} || T <- Tasks]),
+            MaxFbSeq = max_by([{F#feedback.task_id, F#feedback.seq} || F <- Fbs]),
+            Projects1 = [begin
+                             Base = maps:get(K, Imported, maps:get(K, Existing, undefined)),
+                             Old = case maps:get(K, Existing, undefined) of undefined -> 0; #project{task_seq = S} -> S end,
+                             Base#project{task_seq = lists:max([Base#project.task_seq, Old, maps:get(K, MaxTaskSeq, 0)])}
+                         end || K <- lists:usort(maps:keys(Imported) ++ maps:keys(MaxTaskSeq))],
+            Tasks1 = [begin
+                          Base = maps:get(Id, ImportedTasks, maps:get(Id, ExistingTasks, undefined)),
+                          Old = case maps:get(Id, ExistingTasks, undefined) of undefined -> 0; #task{feedback_seq = S} -> S end,
+                          Base#task{feedback_seq = lists:max([Base#task.feedback_seq, Old, maps:get(Id, MaxFbSeq, 0)])}
+                      end || Id <- lists:usort(maps:keys(ImportedTasks) ++ maps:keys(MaxFbSeq))],
+            lists:foreach(fun(R) -> ok = mnesia:write(R) end, Projects1 ++ Tasks1 ++ Fbs ++ Filters ++ Actors1 ++ Links),
             lists:foreach(fun({K, N}) ->
                 Cur = case mnesia:read(counter, K) of [#counter{value = C}] -> C; [] -> 0 end,
                 ok = mnesia:write(#counter{key = K, value = max(Cur, N)})
@@ -168,6 +225,7 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
     catch
         throw:{bad_record, Why} -> {error, {invalid, data, Why}};
         error:{badkey, Key} -> {error, {invalid, data, <<"missing field ", (bosun_util:to_binary(Key))/binary>>}};
+        error:function_clause -> {error, {invalid, data, <<"a record is missing required fields">>}};
         error:Reason -> {error, {invalid, data, bosun_util:to_binary(Reason)}}
     end;
 import(#{<<"format">> := F}, _) when F =/= ?FORMAT ->
@@ -176,6 +234,23 @@ import(#{<<"version">> := V}, _) ->
     {error, {invalid, data, <<"unsupported export version ", (bosun_util:to_binary(V))/binary>>}};
 import(_, _) ->
     {error, {invalid, data, <<"not a bosun export file">>}}.
+
+%% [{Key, N}] → #{Key => 最大的 N}
+max_by(Pairs) ->
+    lists:foldl(fun({K, N}, Acc) -> maps:update_with(K, fun(Old) -> max(Old, N) end, N, Acc) end, #{}, Pairs).
+
+%% 事务内：这个名字没人登记过，或者就是本组织（含孤儿）的
+actor_free(Name, Org) ->
+    case mnesia:read(actor, Name) of
+        [#actor{org_id = O}] when O =/= undefined, O =/= Org -> false;
+        _ -> true
+    end.
+
+project_of(TaskId) -> hd(binary:split(TaskId, <<"-">>)).
+
+%% 组织作用域：一律当前组织；系统作用域：采信文件里的 org_id（没有就是孤儿）
+org_in(Rec, undefined) when is_map(Rec) -> opt_bin(maps:get(<<"org_id">>, Rec, undefined), <<"org_id">>);
+org_in(_Rec, Org) -> Org.
 
 %% 事务内：清掉一个组织的项目 / 任务 / 反馈 / 关联 / 筛选器 / 操作者
 delete_org_data(Org) ->
@@ -204,77 +279,169 @@ import_file(Path, Opts) ->
         {error, R} -> {error, {file, R}}
     end.
 
-project_in(#{<<"key">> := Key, <<"name">> := Name} = P) ->
-    #project{key = Key, name = Name, description = maps:get(<<"description">>, P, <<>>),
-             task_seq = maps:get(<<"task_seq">>, P, 0), archived = maps:get(<<"archived">>, P, false),
-             created_at = maps:get(<<"created_at">>, P, 0), updated_at = maps:get(<<"updated_at">>, P, 0)}.
+%%--------------------------------------------------------------------
+%% 记录解析：字段类型不对就 throw {bad_record, 说明}
+%%--------------------------------------------------------------------
+
+project_in(#{<<"key">> := Key0, <<"name">> := Name} = P) ->
+    Key = case bosun_id:validate_key(Key0) of
+              {ok, K} when K =:= Key0 -> K;
+              _ -> bad(<<"bad project key ", (bosun_util:to_binary(Key0))/binary>>)
+          end,
+    #project{key = Key, name = bin(Name, <<"project name">>),
+             description = bin(maps:get(<<"description">>, P, <<>>), <<"project description">>),
+             task_seq = nat(maps:get(<<"task_seq">>, P, 0), <<"task_seq">>),
+             archived = bool(maps:get(<<"archived">>, P, false), <<"archived">>),
+             created_at = int(maps:get(<<"created_at">>, P, 0), <<"created_at">>),
+             updated_at = int(maps:get(<<"updated_at">>, P, 0), <<"updated_at">>)};
+project_in(_) -> bad(<<"a project needs key and name">>).
 
 task_in(#{<<"id">> := Id, <<"project_key">> := PK, <<"seq">> := Seq, <<"title">> := Title} = T) ->
-    #task{id = Id, project_key = PK, seq = Seq, title = Title,
-          description = maps:get(<<"description">>, T, <<>>),
+    %% id / project_key / seq 三者必须自洽，否则能借别的项目的 key 写进别的项目
+    case bosun_id:parse_task_id(Id) of
+        {ok, Id, PK, Seq} -> ok;
+        _ -> bad(<<"task id ", (bosun_util:to_binary(Id))/binary, " does not match its project_key / seq">>)
+    end,
+    #task{id = Id, project_key = PK, seq = Seq, title = bin(Title, <<"title">>),
+          description = bin(maps:get(<<"description">>, T, <<>>), <<"description">>),
           status = status_in(maps:get(<<"status">>, T, <<"NEW">>)),
           priority = priority_in(maps:get(<<"priority">>, T, <<"medium">>)),
-          labels = maps:get(<<"labels">>, T, []),
-          history = [history_in(H) || H <- maps:get(<<"history">>, T, [])],
-          feedback_seq = maps:get(<<"feedback_seq">>, T, 0),
-          assignee = null_to_undef(maps:get(<<"assignee">>, T, undefined)),
+          labels = bins(maps:get(<<"labels">>, T, []), <<"labels">>),
+          history = [history_in(H) || H <- list(maps:get(<<"history">>, T, []), <<"history">>)],
+          feedback_seq = nat(maps:get(<<"feedback_seq">>, T, 0), <<"feedback_seq">>),
+          assignee = opt_bin(maps:get(<<"assignee">>, T, undefined), <<"assignee">>),
           kind = case maps:get(<<"kind">>, T, <<"task">>) of <<"epic">> -> epic; _ -> task end,
-          epic = null_to_undef(maps:get(<<"epic">>, T, undefined)),
-          created_at = maps:get(<<"created_at">>, T, 0), updated_at = maps:get(<<"updated_at">>, T, 0)}.
+          epic = opt_task_id(maps:get(<<"epic">>, T, undefined), <<"epic">>),
+          created_at = int(maps:get(<<"created_at">>, T, 0), <<"created_at">>),
+          updated_at = int(maps:get(<<"updated_at">>, T, 0), <<"updated_at">>)};
+task_in(_) -> bad(<<"a task needs id, project_key, seq and title">>).
 
 history_in(#{<<"to">> := To} = H) ->
     #{from => case maps:get(<<"from">>, H, null) of null -> undefined; undefined -> undefined; F -> status_in(F) end,
-      to => status_in(To), actor => maps:get(<<"actor">>, H, <<"user">>),
-      comment => null_to_undef(maps:get(<<"comment">>, H, undefined)), at => maps:get(<<"at">>, H, 0),
-      commits => case maps:get(<<"commits">>, H, []) of null -> []; L -> L end,
+      to => status_in(To), actor => bin(maps:get(<<"actor">>, H, <<"user">>), <<"history actor">>),
+      comment => opt_bin(maps:get(<<"comment">>, H, undefined), <<"history comment">>),
+      at => int(maps:get(<<"at">>, H, 0), <<"history at">>),
+      commits => case maps:get(<<"commits">>, H, []) of null -> []; L -> bins(L, <<"commits">>) end,
       tests => case maps:get(<<"tests">>, H, undefined) of
-                   #{<<"passed">> := P} = M -> #{command => maps:get(<<"command">>, M, <<>>), passed => P, summary => maps:get(<<"summary">>, M, <<>>)};
+                   #{<<"passed">> := P} = M ->
+                       #{command => bin(maps:get(<<"command">>, M, <<>>), <<"tests.command">>),
+                         passed => bool(P, <<"tests.passed">>),
+                         summary => bin(maps:get(<<"summary">>, M, <<>>), <<"tests.summary">>)};
                    _ -> undefined
-               end}.
+               end};
+history_in(_) -> bad(<<"a history entry needs `to`">>).
 
 feedback_in(#{<<"id">> := Id, <<"task_id">> := TaskId, <<"seq">> := Seq, <<"content">> := Content} = F) ->
+    case bosun_id:parse_feedback_id(Id) of
+        {ok, Id, TaskId, Seq} -> ok;
+        _ -> bad(<<"feedback id ", (bosun_util:to_binary(Id))/binary, " does not match its task_id / seq">>)
+    end,
     Kind = case bosun_feedback:parse_kind(maps:get(<<"kind">>, F, <<"comment">>)) of
                {ok, K} -> K;
-               {error, _} -> throw({bad_record, <<"bad feedback kind in ", Id/binary>>})
+               {error, _} -> bad(<<"bad feedback kind in ", Id/binary>>)
            end,
-    #feedback{id = Id, task_id = TaskId, seq = Seq, author = maps:get(<<"author">>, F, <<"user">>),
-              kind = Kind, content = Content, created_at = maps:get(<<"created_at">>, F, 0),
-              supersedes = null_to_undef(maps:get(<<"supersedes">>, F, undefined)),
-              superseded_by = null_to_undef(maps:get(<<"superseded_by">>, F, undefined))}.
+    #feedback{id = Id, task_id = TaskId, seq = Seq,
+              author = bin(maps:get(<<"author">>, F, <<"user">>), <<"author">>),
+              kind = Kind, content = bin(Content, <<"content">>),
+              created_at = int(maps:get(<<"created_at">>, F, 0), <<"created_at">>),
+              supersedes = opt_bin(maps:get(<<"supersedes">>, F, undefined), <<"supersedes">>),
+              superseded_by = opt_bin(maps:get(<<"superseded_by">>, F, undefined), <<"superseded_by">>)};
+feedback_in(_) -> bad(<<"a feedback needs id, task_id, seq and content">>).
 
-actor_in(#{<<"name">> := Name} = A) ->
+actor_in(#{<<"name">> := Name0} = A) ->
+    Name = bin(Name0, <<"actor name">>),
     Kind = case bosun_actor:parse_kind(maps:get(<<"kind">>, A, <<"agent">>)) of
-               undefined -> throw({bad_record, <<"bad actor kind for ", Name/binary>>});
+               undefined -> bad(<<"bad actor kind for ", Name/binary>>);
                K -> K
            end,
     #actor{name = Name, kind = Kind,
-           project = null_to_undef(maps:get(<<"project">>, A, undefined)),
-           worktree = null_to_undef(maps:get(<<"worktree">>, A, undefined)),
-           first_seen = maps:get(<<"first_seen">>, A, 0), last_seen = maps:get(<<"last_seen">>, A, 0)}.
+           project = opt_bin(maps:get(<<"project">>, A, undefined), <<"actor project">>),
+           worktree = opt_bin(maps:get(<<"worktree">>, A, undefined), <<"actor worktree">>),
+           first_seen = int(maps:get(<<"first_seen">>, A, 0), <<"first_seen">>),
+           last_seen = int(maps:get(<<"last_seen">>, A, 0), <<"last_seen">>)};
+actor_in(_) -> bad(<<"an actor needs a name">>).
 
-link_in(#{<<"from">> := From, <<"to">> := To, <<"type">> := T} = L) ->
+link_in(#{<<"from">> := From0, <<"to">> := To0, <<"type">> := T} = L) ->
+    From = task_id(From0, <<"link from">>),
+    To = task_id(To0, <<"link to">>),
     Type = case bosun_link:parse_type(T) of
                {ok, Ty} -> Ty;
-               {error, _} -> throw({bad_record, <<"bad link type ", From/binary, " -> ", To/binary>>})
+               {error, _} -> bad(<<"bad link type ", From/binary, " -> ", To/binary>>)
            end,
     #link{key = {From, To, Type}, from = From, to = To, type = Type,
-          actor = maps:get(<<"actor">>, L, <<"user">>), created_at = maps:get(<<"created_at">>, L, 0)}.
+          actor = bin(maps:get(<<"actor">>, L, <<"user">>), <<"link actor">>),
+          created_at = int(maps:get(<<"created_at">>, L, 0), <<"created_at">>)};
+link_in(_) -> bad(<<"a link needs from, to and type">>).
 
 filter_in(#{<<"id">> := Id, <<"name">> := Name, <<"query">> := Q} = F) ->
-    #filter{id = Id, name = Name, query = Q,
-            created_at = maps:get(<<"created_at">>, F, 0), updated_at = maps:get(<<"updated_at">>, F, 0)}.
+    #filter{id = bin(Id, <<"filter id">>), name = bin(Name, <<"filter name">>), query = bin(Q, <<"filter query">>),
+            created_at = int(maps:get(<<"created_at">>, F, 0), <<"created_at">>),
+            updated_at = int(maps:get(<<"updated_at">>, F, 0), <<"updated_at">>)};
+filter_in(_) -> bad(<<"a filter needs id, name and query">>).
+
+%% 计数器名只认已有的原子，免得导入文件往原子表里灌垃圾
+counter_in(K) when is_binary(K) ->
+    try binary_to_existing_atom(K, utf8)
+    catch error:badarg -> bad(<<"unknown counter ", K/binary>>)
+    end.
 
 status_in(S) ->
     case bosun_task_status:parse(S) of
         {ok, A} -> A;
-        {error, _} -> throw({bad_record, <<"bad status ", (bosun_util:to_binary(S))/binary>>})
+        {error, _} -> bad(<<"bad status ", (bosun_util:to_binary(S))/binary>>)
     end.
 
 priority_in(P) ->
     case string:lowercase(bosun_util:to_binary(P)) of
         <<"low">> -> low; <<"medium">> -> medium; <<"high">> -> high;
-        _ -> throw({bad_record, <<"bad priority ", (bosun_util:to_binary(P))/binary>>})
+        _ -> bad(<<"bad priority ", (bosun_util:to_binary(P))/binary>>)
     end.
 
-null_to_undef(null) -> undefined;
-null_to_undef(V) -> V.
+-spec bad(binary()) -> no_return().
+bad(Why) -> throw({bad_record, Why}).
+
+list_in(Key, Data) -> list(maps:get(Key, Data, []), Key).
+
+map_in(Key, Data) ->
+    case maps:get(Key, Data, #{}) of
+        M when is_map(M) -> M;
+        null -> #{};
+        _ -> bad(<<Key/binary, " must be an object">>)
+    end.
+
+list(L, _What) when is_list(L) -> L;
+list(null, _What) -> [];
+list(_, What) -> bad(<<What/binary, " must be a list">>).
+
+bin(B, _What) when is_binary(B) -> B;
+bin(_, What) -> bad(<<What/binary, " must be a string">>).
+
+opt_bin(null, _What) -> undefined;
+opt_bin(undefined, _What) -> undefined;
+opt_bin(B, What) -> bin(B, What).
+
+bins(L, What) when is_list(L) ->
+    case lists:all(fun is_binary/1, L) of
+        true -> L;
+        false -> bad(<<What/binary, " must be a list of strings">>)
+    end;
+bins(_, What) -> bad(<<What/binary, " must be a list of strings">>).
+
+int(I, _What) when is_integer(I) -> I;
+int(_, What) -> bad(<<What/binary, " must be an integer">>).
+
+nat(I, _What) when is_integer(I), I >= 0 -> I;
+nat(_, What) -> bad(<<What/binary, " must be a non-negative integer">>).
+
+bool(B, _What) when is_boolean(B) -> B;
+bool(_, What) -> bad(<<What/binary, " must be true or false">>).
+
+task_id(V, What) ->
+    case bosun_id:parse_task_id(V) of
+        {ok, V, _, _} -> V;
+        _ -> bad(<<What/binary, " must be a task id like BOS-12">>)
+    end.
+
+opt_task_id(null, _What) -> undefined;
+opt_task_id(undefined, _What) -> undefined;
+opt_task_id(V, What) -> task_id(V, What).

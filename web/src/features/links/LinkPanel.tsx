@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { searchTasks, type SearchHit } from '@/api/search';
 import { addLink } from '@/api/tasks';
 import type { LinkType, Task } from '@/api/types';

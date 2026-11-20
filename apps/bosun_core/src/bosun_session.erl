@@ -35,9 +35,17 @@ lookup(Token) when is_binary(Token), Token =/= <<>> ->
         [#session{expires_at = Exp, id = Id}] when Exp < Now ->
             mnesia:dirty_delete(session, Id),
             {error, unauthorized};
-        [#session{user_id = UserId, last_seen_at = Seen} = S] ->
+        [#session{user_id = UserId, last_seen_at = Seen, id = Id}] ->
+            %% 事务里重读再写：脏写整条会把并发登出 / 踢会话删掉的记录写回来
             case Now - Seen > ?TOUCH_MS of
-                true -> mnesia:dirty_write(S#session{last_seen_at = Now, expires_at = Now + ?TTL_MS});
+                true ->
+                    _ = bosun_store:transaction(fun() ->
+                        case mnesia:read(session, Id, write) of
+                            [Cur] -> mnesia:write(Cur#session{last_seen_at = Now, expires_at = Now + ?TTL_MS});
+                            [] -> ok
+                        end
+                    end),
+                    ok;
                 false -> ok
             end,
             case bosun_user:principal(UserId, #{via => session}) of

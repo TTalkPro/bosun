@@ -137,10 +137,19 @@ to_map(#api_key{} = K) ->
 opt_time(undefined) -> undefined;
 opt_time(T) -> bosun_json:iso8601(T).
 
-touch(#api_key{last_used_at = Last} = K) ->
+%% 事务里重读再写：脏写整条记录会把并发的撤销 / 轮换覆盖回去（撤销了的 key 又活过来）。
+touch(#api_key{id = Id, hash = Hash, last_used_at = Last}) ->
     Now = bosun_util:now_ms(),
     case Last =:= undefined orelse Now - Last > ?TOUCH_MS of
-        true -> mnesia:dirty_write(K#api_key{last_used_at = Now});
+        true ->
+            _ = bosun_store:transaction(fun() ->
+                case mnesia:read(api_key, Id, write) of
+                    [#api_key{hash = Hash, revoked_at = undefined} = Cur] ->
+                        mnesia:write(Cur#api_key{last_used_at = Now});
+                    _ -> ok
+                end
+            end),
+            ok;
         false -> ok
     end.
 

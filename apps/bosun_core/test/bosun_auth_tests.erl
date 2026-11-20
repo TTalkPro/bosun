@@ -19,7 +19,11 @@ auth_test_() ->
         {"api key scopes", fun api_key_scopes/0},
         {"org isolation", fun org_isolation/0},
         {"backup scoped", fun backup_scoped/0},
-        {"adopt orphans", fun adopt_orphans/0}
+        {"adopt orphans", fun adopt_orphans/0},
+        {"import cannot reach into another org", fun import_cross_org/0},
+        {"key project whitelist covers projects & export", fun key_project_whitelist/0},
+        {"password change / reset kills sessions", fun password_kills_sessions/0},
+        {"system-scope backup keeps org ids", fun backup_keeps_orgs/0}
     ],
     {foreach, fun setup/0, fun(_) -> bosun_scope:clear() end,
      [fun(_) -> T end || T <- Tests]}.
@@ -296,6 +300,100 @@ backup_scoped() ->
     %% 系统作用域导出带计数器与全部数据
     {ok, #{<<"projects">> := [_, _], <<"counters">> := Counters}} = bosun_backup:export(),
     ?assert(map_size(Counters) > 0).
+
+%% 组织 B 的管理员拿一个写着组织 A 项目 key 的文件，改不了 A 的任何东西
+import_cross_org() ->
+    {_, A} = register(<<"Acme">>, <<"admin@acme.io">>, <<"Alice">>),
+    {_, B} = register(<<"Beta">>, <<"root@beta.io">>, <<"Bob">>),
+    PA = principal(A), PB = principal(B),
+    bosun_scope:with(PA, fun() ->
+        {ok, _} = bosun_project:create(#{<<"key">> => <<"ACM">>, <<"name">> => <<"Acme">>}),
+        {ok, _} = bosun_task:create(<<"ACM">>, #{<<"title">> => <<"original">>, <<"actor">> => <<"Alice">>}),
+        {ok, _} = bosun_feedback:add(<<"ACM-1">>, #{<<"content">> => <<"original note">>, <<"author">> => <<"Alice">>})
+    end),
+    bosun_scope:with(PB, fun() ->
+        {ok, _} = bosun_project:create(#{<<"key">> => <<"BET">>, <<"name">> => <<"Beta">>}),
+        {ok, _} = bosun_task:create(<<"BET">>, #{<<"title">> => <<"b1">>, <<"actor">> => <<"Bob">>})
+    end),
+    Base = #{<<"format">> => <<"bosun-export">>, <<"version">> => 2},
+    Evil = #{<<"id">> => <<"ACM-1">>, <<"project_key">> => <<"ACM">>, <<"seq">> => 1, <<"title">> => <<"pwned">>},
+    Import = fun(Data, Mode) -> bosun_scope:with(PB, fun() -> bosun_backup:import(maps:merge(Base, Data), #{mode => Mode}) end) end,
+    %% 文件里不带项目、只带别人项目下的任务 / 反馈 / 关联
+    [?assertMatch({error, {invalid, data, <<"refers to unknown project ACM">>}}, Import(D, M))
+     || M <- [merge, replace],
+        D <- [#{<<"tasks">> => [Evil]},
+              #{<<"feedback">> => [#{<<"id">> => <<"ACM-1#1">>, <<"task_id">> => <<"ACM-1">>, <<"seq">> => 1, <<"content">> => <<"pwned">>}]},
+              #{<<"links">> => [#{<<"from">> => <<"BET-1">>, <<"to">> => <<"ACM-1">>, <<"type">> => <<"replaces">>}]}]],
+    %% 借自己项目的 key、却写别人任务的 id
+    ?assertMatch({error, {invalid, data, _}}, Import(#{<<"tasks">> => [Evil#{<<"project_key">> := <<"BET">>}]}, merge)),
+    %% 带上项目 → key 被 A 占着
+    ?assertEqual({error, {conflict, key}}, Import(#{<<"projects">> => [#{<<"key">> => <<"ACM">>, <<"name">> => <<"mine now">>}], <<"tasks">> => [Evil]}, merge)),
+    %% 同名操作者：不改 A 那条的归属和类型
+    {ok, _} = Import(#{<<"actors">> => [#{<<"name">> => <<"Alice">>, <<"kind">> => <<"agent">>}, #{<<"name">> => <<"beta-bot">>, <<"kind">> => <<"agent">>}]}, merge),
+    bosun_scope:with(PA, fun() ->
+        {ok, #{<<"title">> := <<"original">>, <<"feedback">> := [#{<<"content">> := <<"original note">>}], <<"links">> := []}} = bosun_task:get(<<"ACM-1">>),
+        {ok, #{<<"name">> := <<"Acme">>}} = bosun_project:get(<<"ACM">>),
+        {ok, As} = bosun_actor:list(),
+        ?assertMatch([#{<<"kind">> := <<"human">>}], [X || #{<<"name">> := <<"Alice">>} = X <- As])
+    end),
+    bosun_scope:with(PB, fun() ->
+        {ok, Bs} = bosun_actor:list(),
+        ?assertEqual([<<"Bob">>, <<"beta-bot">>], lists:sort([maps:get(<<"name">>, X) || X <- Bs]))
+    end).
+
+%% key 的项目白名单：项目列表 / 详情 / 导出也只给白名单里的；`*' = 全部
+key_project_whitelist() ->
+    {_, #{<<"id">> := Uid} = A} = register(<<"Acme">>, <<"admin@acme.io">>, <<"Alice">>),
+    bosun_scope:with(principal(A), fun() ->
+        {ok, _} = bosun_project:create(#{<<"key">> => <<"ONE">>, <<"name">> => <<"allowed">>}),
+        {ok, _} = bosun_project:create(#{<<"key">> => <<"TWO">>, <<"name">> => <<"hidden">>}),
+        {ok, _} = bosun_task:create(<<"TWO">>, #{<<"title">> => <<"secret">>})
+    end),
+    {ok, #{<<"key">> := Plain}} = bosun_api_key:create(Uid, <<"one">>, #{<<"scopes">> => [<<"read">>, <<"manage">>], <<"project_keys">> => [<<"ONE">>]}),
+    {ok, P} = bosun_api_key:authenticate(Plain),
+    bosun_scope:with(P, fun() ->
+        {ok, [#{<<"key">> := <<"ONE">>}]} = bosun_project:list(#{}),
+        ?assertEqual({error, not_found}, bosun_project:get(<<"TWO">>)),
+        ?assertEqual({error, not_found}, bosun_project:update(<<"TWO">>, #{<<"name">> => <<"x">>})),
+        {ok, #{<<"projects">> := [#{<<"key">> := <<"ONE">>}], <<"tasks">> := []}} = bosun_backup:export()
+    end),
+    {ok, #{<<"key">> := Star}} = bosun_api_key:create(Uid, <<"all">>, #{<<"project_keys">> => [<<"*">>]}),
+    {ok, PStar} = bosun_api_key:authenticate(Star),
+    bosun_scope:with(PStar, fun() ->
+        {ok, [_, _]} = bosun_project:list(#{}),
+        ?assertEqual(true, bosun_scope:project_visible(<<"TWO">>))
+    end).
+
+%% 改密 / 管理员重置密码后，旧会话全部失效；撤销的 key、删掉的会话不会被「最近使用」回写复活
+password_kills_sessions() ->
+    {#{<<"id">> := OrgId}, #{<<"id">> := Uid}} = register(<<"Acme">>, <<"admin@acme.io">>, <<"Alice">>),
+    {ok, T1} = bosun_session:create(Uid),
+    {ok, T2} = bosun_session:create(Uid),
+    {ok, _} = bosun_session:lookup(T1),
+    ok = bosun_user:change_password(Uid, <<"secret123">>, <<"newsecret1">>),
+    ?assertEqual({error, unauthorized}, bosun_session:lookup(T1)),
+    ?assertEqual({error, unauthorized}, bosun_session:lookup(T2)),
+    {ok, T3} = bosun_session:create(Uid),
+    {ok, _} = bosun_user:update(OrgId, Uid, #{<<"name">> => <<"Alice B">>}),
+    {ok, _} = bosun_session:lookup(T3),                     %% 改名不踢
+    {ok, _} = bosun_user:update(OrgId, Uid, #{<<"password">> => <<"resetsecret1">>}),
+    ?assertEqual({error, unauthorized}, bosun_session:lookup(T3)),
+    ?assertMatch({ok, #{<<"last_login_at">> := L}} when is_binary(L), bosun_user:authenticate(<<"admin@acme.io">>, <<"resetsecret1">>)).
+
+%% 系统作用域的整库导出 / 导入（scripts/export.sh 之外的 shell 备份）保留项目的组织归属
+backup_keeps_orgs() ->
+    {#{<<"id">> := OrgId}, A} = register(<<"Acme">>, <<"admin@acme.io">>, <<"Alice">>),
+    bosun_scope:with(principal(A), fun() ->
+        {ok, _} = bosun_project:create(#{<<"key">> => <<"ACM">>, <<"name">> => <<"Acme">>}),
+        {ok, _} = bosun_filter:create(#{<<"name">> => <<"fa">>, <<"query">> => <<"project = ACM">>})
+    end),
+    {ok, Map} = bosun_backup:export(),
+    {ok, Decoded} = bosun_json:decode(bosun_json:encode(Map)),
+    {ok, _} = bosun_backup:import(Decoded, #{mode => replace}),
+    bosun_scope:with(principal(A), fun() ->
+        {ok, [#{<<"key">> := <<"ACM">>, <<"org_id">> := OrgId}]} = bosun_project:list(#{}),
+        {ok, [#{<<"name">> := <<"fa">>}]} = bosun_filter:list()
+    end).
 
 adopt_orphans() ->
     %% 系统作用域建的项目没有组织 → 谁都看不到，收编后归该组织

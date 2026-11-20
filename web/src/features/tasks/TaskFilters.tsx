@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Flag, Search } from 'lucide-react';
 import type { Status, TaskFilter } from '@/api/types';
 import { ALL_STATUSES, STATUS_LABEL } from './status';
@@ -23,14 +23,27 @@ const activeChip: Record<Status, string> = {
 // 搜索走后端 BM25：标题 ×3、标签 ×8 加权，正文与 Feedback 也在内，所以不再单独有标签过滤。
 const TaskFilters = ({ value, onChange }: Props) => {
   const [q, setQ] = useState(value.q ?? '');
+  // sent：自己最近一次发出去的 q；seenQ：上次渲染看到的外部 q
+  const [sent, setSent] = useState(value.q ?? '');
+  const [seenQ, setSeenQ] = useState(value.q ?? '');
+  // 防抖回调里要用**最新**的筛选值：打字后 300ms 内点了状态 chip，不能拿旧的 value 把它盖回去
+  const latest = useRef({ value, onChange });
+  useEffect(() => { latest.current = { value, onChange }; });
 
   useEffect(() => {
     const t = setTimeout(() => {
-      if ((value.q ?? '') !== q) onChange({ ...value, q: q || undefined, offset: 0 });
+      const { value: v, onChange: change } = latest.current;
+      if ((v.q ?? '') !== q) { setSent(q); change({ ...v, q: q || undefined, offset: 0 }); }
     }, 300);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
+
+  // 外面把 q 改了（切项目、浏览器前进后退）：搜索框跟上。自己刚发出去的那次不算，
+  // 免得回声把这 300ms 里接着打的字冲掉
+  if ((value.q ?? '') !== seenQ) {
+    setSeenQ(value.q ?? '');
+    if ((value.q ?? '') !== sent) { setQ(value.q ?? ''); setSent(value.q ?? ''); }
+  }
 
   const selected = value.status ?? [];
   const toggle = (s: Status) => {

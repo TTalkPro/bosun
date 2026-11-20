@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Flag } from 'lucide-react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { createTask, useEpics } from '@/api/tasks';
 import type { Priority, Task, TaskKind } from '@/api/types';
 import MarkdownEditor from '@/components/markdown/MarkdownEditor';
@@ -50,7 +50,7 @@ const TaskFormDialog = ({ open, onClose, projectKey, onCreated, defaultEpic }: P
       onCreated?.(t);
       onClose();
     } catch (e) {
-      const { field, message } = handleError(e);
+      const { field, message } = handleError(e, ['title']);
       if (field === 'title') setTitleError(message);
     } finally {
       setBusy(false);

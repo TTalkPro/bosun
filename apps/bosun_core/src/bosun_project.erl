@@ -49,7 +49,8 @@ list(Opts) ->
               undefined -> mnesia:dirty_select(project, [{'_', [], ['$_']}]);
               Org -> mnesia:dirty_index_read(project, Org, #project.org_id)
           end,
-    Filtered = [P || P <- All, IncludeArchived orelse not P#project.archived],
+    Filtered = [P || P <- All, IncludeArchived orelse not P#project.archived,
+                     bosun_scope:project_allowed(P#project.key)],
     Sorted = lists:sort(fun(A, B) -> A#project.created_at =< B#project.created_at end, Filtered),
     {ok, [bosun_json:project_to_map(P) || P <- Sorted]}.
 
@@ -98,8 +99,8 @@ next_task_seq_in_tx(Key) ->
 %% 别的组织的项目按不存在处理
 read_dirty(Key) -> visible(mnesia:dirty_read(project, Key)).
 
-visible([#project{org_id = Org} = P]) ->
-    case bosun_scope:filter_org(Org) of
+visible([#project{org_id = Org, key = Key} = P]) ->
+    case bosun_scope:filter_org(Org) andalso bosun_scope:project_allowed(Key) of
         true -> [P];
         false -> []
     end;

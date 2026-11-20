@@ -60,12 +60,11 @@ const CrepeEditor = ({ value, onChange, placeholder = '写点什么…支持 Mar
         },
       },
     });
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    // 不防抖：以前攒 200ms 才回调，打完最后几个字马上点「保存」时父组件手里还是旧稿，卸载时又直接丢弃
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, md, prev) => {
         if (md === prev) return;
-        clearTimeout(timer);
-        timer = setTimeout(() => onChangeRef.current(md), 200);
+        onChangeRef.current(md);
       });
     });
     const creating = crepe.create().then(() => {
@@ -78,7 +77,6 @@ const CrepeEditor = ({ value, onChange, placeholder = '写点什么…支持 Mar
       });
     });
     return () => {
-      clearTimeout(timer);
       creating.then(() => crepe.destroy());
     };
     // placeholder / autoFocus 只在挂载时读取

@@ -18,7 +18,7 @@
 -include("bosun.hrl").
 
 -export([set/1, get/0, clear/0, org_id/0, user_id/0, actor_name/0, role/0,
-         scopes/0, has_scope/1, project_visible/1, filter_org/1, with/2]).
+         scopes/0, has_scope/1, project_visible/1, project_allowed/1, filter_org/1, with/2]).
 
 -type principal() :: #{user_id := binary(), org_id := binary(), name := binary(),
                        email := binary(), role := admin | member,
@@ -119,13 +119,16 @@ org_matches(RecordOrg) ->
         Org -> RecordOrg =:= Org
     end.
 
-%% API key 可以只授权一部分项目；undefined / 空列表表示组织内全部可见。
-project_allowed(Key) ->
+%% @doc 当前主体的 API key 是否被授权看这个项目（只看 key 的项目白名单，不查组织）。
+%% undefined / 空列表 / 含 `*' 表示组织内全部项目。
+-spec project_allowed(binary()) -> boolean().
+project_allowed(Key0) ->
     case erlang:get(?KEY) of
         #{project_keys := undefined} -> true;
         #{project_keys := Keys} when is_list(Keys) ->
+            Key = string:uppercase(bosun_util:to_binary(Key0)),
             Normalized = [string:uppercase(bosun_util:to_binary(K)) ||
                              K <- Keys, bosun_util:trim(K) =/= <<>>],
-            Normalized =:= [] orelse lists:member(Key, Normalized);
+            Normalized =:= [] orelse lists:member(<<"*">>, Normalized) orelse lists:member(Key, Normalized);
         _ -> true
     end.

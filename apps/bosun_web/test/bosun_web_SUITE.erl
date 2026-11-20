@@ -304,16 +304,25 @@ auth_flow(Config) ->
     {200, _} = req(patch, Config, "/api/v1/users/" ++ binary_to_list(BobId), #{<<"status">> => <<"active">>, <<"password">> => <<"reset1234">>}),
     Bob = login(Base, <<"bob@acme.io">>, <<"reset1234">>),
     {200, #{<<"user">> := #{<<"name">> := <<"Bob">>, <<"role">> := <<"member">>}}} = req(get, Bob, "/api/v1/auth/me"),
-    %% 改密：错当前密码 401，成功后旧 cookie 仍有效、新密码可登录
-    {401, _} = req(post, Bob, "/api/v1/auth/password", #{<<"current">> => <<"wrong">>, <<"new">> => <<"newpass123">>}),
+    %% 改密：错当前密码是表单错误（400 field=current，不是 401——前端见 401 会当成会话失效）；
+    %% 成功后该用户的旧会话全部作废，当前浏览器在响应里拿到新 cookie，新密码可登录
+    BobElsewhere = login(Base, <<"bob@acme.io">>, <<"reset1234">>),
+    {400, #{<<"field">> := <<"current">>}} = req(post, Bob, "/api/v1/auth/password", #{<<"current">> => <<"wrong">>, <<"new">> => <<"newpass123">>}),
     {400, #{<<"field">> := <<"password">>}} = req(post, Bob, "/api/v1/auth/password", #{<<"current">> => <<"reset1234">>, <<"new">> => <<"x">>}),
-    {204, _} = req(post, Bob, "/api/v1/auth/password", #{<<"current">> => <<"reset1234">>, <<"new">> => <<"newpass123">>}),
+    {ok, {{_, 204, _}, PwHeaders, _}} =
+        httpc:request(post, {Base ++ "/api/v1/auth/password", [cookie_header(Bob)], "application/json",
+                             bosun_json:encode(#{<<"current">> => <<"reset1234">>, <<"new">> => <<"newpass123">>})},
+                      [], [{body_format, binary}]),
+    {401, _} = req(get, BobElsewhere, "/api/v1/auth/me"),
+    {401, _} = req(get, Bob, "/api/v1/auth/me"),
+    Bob1 = [{base, Base}, {cookie, cookie_value(PwHeaders)}],
+    {200, #{<<"user">> := #{<<"name">> := <<"Bob">>}}} = req(get, Bob1, "/api/v1/auth/me"),
     _ = login(Base, <<"bob@acme.io">>, <<"newpass123">>),
     %% key：建、列（无明文）、用只读 Bearer 打 REST、写接口按 scope 拒绝、撤销
     {201, _} = req(post, Config, "/api/v1/projects", #{<<"key">> => <<"KEYS">>, <<"name">> => <<"Keys">>}),
-    {201, #{<<"key">> := Key, <<"id">> := Kid, <<"prefix">> := Prefix}} = req(post, Bob, "/api/v1/keys", #{<<"name">> => <<"laptop">>}),
+    {201, #{<<"key">> := Key, <<"id">> := Kid, <<"prefix">> := Prefix}} = req(post, Bob1, "/api/v1/keys", #{<<"name">> => <<"laptop">>}),
     ?assertMatch(<<"bsk_", _/binary>>, Key),
-    {200, #{<<"keys">> := [#{<<"id">> := Kid, <<"prefix">> := Prefix, <<"status">> := <<"active">>} = K]}} = req(get, Bob, "/api/v1/keys"),
+    {200, #{<<"keys">> := [#{<<"id">> := Kid, <<"prefix">> := Prefix, <<"status">> := <<"active">>} = K]}} = req(get, Bob1, "/api/v1/keys"),
     ?assertNot(maps:is_key(<<"key">>, K)),
     Bearer = [{base, Base}, {auth, {"authorization", "Bearer " ++ binary_to_list(Key)}}],
     {200, #{<<"via">> := <<"api_key">>, <<"user">> := #{<<"name">> := <<"Bob">>}}} = req(get, Bearer, "/api/v1/auth/me"),
@@ -322,22 +331,32 @@ auth_flow(Config) ->
         req(post, Bearer, "/api/v1/projects/KEYS/tasks", #{<<"title">> => <<"denied">>}),
     {403, #{<<"error">> := <<"forbidden_scope">>}} =
         req(post, Bearer, "/api/v1/projects", #{<<"key">> => <<"NOPE">>, <<"name">> => <<"Nope">>}),
+    %% 只读 key 不能拿自己去轮换 / 撤销 key（以前 `POST /keys/:id' 不在 scope 表里，能换出别的 key 的明文）
+    KidPath = "/api/v1/keys/" ++ binary_to_list(Kid),
+    {403, #{<<"error">> := <<"forbidden_scope">>}} = req(post, Bearer, KidPath, #{}),
+    {403, #{<<"error">> := <<"forbidden_scope">>}} = req(post, Bearer, KidPath ++ "/rotate", #{}),
+    {403, #{<<"error">> := <<"forbidden_scope">>}} = req(delete, Bearer, KidPath),
+    {403, #{<<"error">> := <<"forbidden_scope">>}} = req(delete, Bearer, KidPath ++ "/rotate"),
+    %% 登录用户走错方法：405，不会顺手轮换 / 撤销
+    {405, _} = req(post, Bob1, KidPath, #{}),
+    {405, _} = req(delete, Bob1, KidPath ++ "/rotate"),
+    {200, #{<<"keys">> := [#{<<"id">> := Kid, <<"status">> := <<"active">>, <<"rotated_at">> := null}]}} = req(get, Bob1, "/api/v1/keys"),
     %% 轮换：旧秘密值立即失效；权限配置保留，新明文只返回一次
     {404, _} = req(post, Config, "/api/v1/keys/" ++ binary_to_list(Kid) ++ "/rotate", #{}),
     {201, #{<<"key">> := NewKey, <<"id">> := Kid, <<"rotated_at">> := RotatedAt,
             <<"last_used_at">> := null, <<"scopes">> := [<<"read">>]}} =
-        req(post, Bob, "/api/v1/keys/" ++ binary_to_list(Kid) ++ "/rotate", #{}),
+        req(post, Bob1, "/api/v1/keys/" ++ binary_to_list(Kid) ++ "/rotate", #{}),
     ?assertNotEqual(Key, NewKey),
     ?assert(is_binary(RotatedAt)),
     {401, _} = req(get, Bearer, "/api/v1/auth/me"),
     NewBearer = [{base, Base}, {auth, {"authorization", "Bearer " ++ binary_to_list(NewKey)}}],
     {200, #{<<"via">> := <<"api_key">>, <<"user">> := #{<<"name">> := <<"Bob">>}}} = req(get, NewBearer, "/api/v1/auth/me"),
     {404, _} = req(delete, Config, "/api/v1/keys/" ++ binary_to_list(Kid)),   %% 别人的 key 撤不了
-    {204, _} = req(delete, Bob, "/api/v1/keys/" ++ binary_to_list(Kid)),
+    {204, _} = req(delete, Bob1, "/api/v1/keys/" ++ binary_to_list(Kid)),
     {401, _} = req(get, NewBearer, "/api/v1/auth/me"),
     %% 登出：cookie 失效
-    {204, _} = req(post, Bob, "/api/v1/auth/logout"),
-    {401, _} = req(get, Bob, "/api/v1/auth/me"),
+    {204, _} = req(post, Bob1, "/api/v1/auth/logout"),
+    {401, _} = req(get, Bob1, "/api/v1/auth/me"),
     ok.
 
 %% 两个组织互相看不到

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link as RouterLink, useParams } from 'react-router';
 import { ChevronRight, Flag, GitCommitVertical, MessageSquareText, Pencil, Plus } from 'lucide-react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { isApiError } from '@/api/client';
 import { updateTask, useEpics, useTask } from '@/api/tasks';
 import type { Feedback, Priority, Task } from '@/api/types';
@@ -52,9 +52,13 @@ const InlineTitle = ({ task, onSave }: { task: Task; onSave: (title: string) => 
     return (
       <Input
         autoFocus
+        value={value}
         onChange={(e) => setValue(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+        onBlur={() => { commit().catch(() => {}); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing) commit().catch(() => {});
+          if (e.key === 'Escape') { setValue(task.title); setEditing(false); }
+        }}
         className="border-0 border-b-2 border-primary px-0 text-3xl font-bold leading-tight shadow-none focus-visible:ring-0"
       />
     );
@@ -80,7 +84,7 @@ const Description = ({ task, onSave }: { task: Task; onSave: (description: strin
         {editing ? (
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={() => setEditing(false)} disabled={busy}>取消</Button>
-            <Button size="sm" disabled={busy} onClick={async () => { setBusy(true); try { await onSave(draft); setEditing(false); } finally { setBusy(false); } }}>保存</Button>
+            <Button size="sm" disabled={busy} onClick={async () => { setBusy(true); try { await onSave(draft); setEditing(false); } catch { /* patch 已提示，留在编辑态 */ } finally { setBusy(false); } }}>保存</Button>
           </div>
         ) : (
           <Button size="sm" variant="outline" onClick={() => { setDraft(task.description); setSession((n) => n + 1); setEditing(true); }}><Pencil />编辑</Button>
@@ -93,9 +97,15 @@ const Description = ({ task, onSave }: { task: Task; onSave: (description: strin
   );
 };
 
+// 路由 tasks/:id 在任务之间跳转时复用同一个组件实例：按任务 id 加 key 整个重建，
+// 免得上一个任务的编辑态（描述草稿、标签输入、弹窗）带到下一个任务里、存错地方。
 const TaskDetailPage = () => {
   const { id = '' } = useParams();
   const taskId = id.toUpperCase();
+  return <TaskDetail key={taskId} taskId={taskId} />;
+};
+
+const TaskDetail = ({ taskId }: { taskId: string }) => {
   const { data: task, error, mutate } = useTask(taskId);
   const { enqueueSnackbar } = useSnackbar();
   const handleError = useApiError();
@@ -113,14 +123,22 @@ const TaskDetailPage = () => {
   }, [task]);
 
   if (isApiError(error) && (error.status === 404 || error.status === 400)) return <NotFoundPage message={`任务 ${taskId} 不存在`} />;
+  if (!task && error) {
+    return (
+      <div role="alert" className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+        <span className="flex-1">任务 {taskId} 加载失败：{isApiError(error) ? error.message : String(error)}</span>
+        <Button size="sm" variant="outline" onClick={() => mutate()}>重试</Button>
+      </div>
+    );
+  }
   if (!task) return <div className="space-y-4"><Skeleton className="h-12 w-80" /><Skeleton className="h-60 w-full rounded-xl" /></div>;
   const addLabel = () => {
     const label = labelInput.trim();
     if (!label || task.labels.includes(label)) return;
-    patch({ labels: [...task.labels, label] });
+    save({ labels: [...task.labels, label] });
     setLabelInput('');
   };
-  const removeLabel = (label: string) => patch({ labels: task.labels.filter((item) => item !== label) });
+  const removeLabel = (label: string) => save({ labels: task.labels.filter((item) => item !== label) });
 
   const patch = async (input: Parameters<typeof updateTask>[1]) => {
     try {
@@ -132,6 +150,8 @@ const TaskDetailPage = () => {
       throw e;
     }
   };
+  // 不关心结果的调用点用它：失败已经提示过了，别再留一个未处理的 rejection
+  const save = (input: Parameters<typeof updateTask>[1]) => { patch(input).catch(() => {}); };
 
   return (
     <div>
@@ -157,7 +177,7 @@ const TaskDetailPage = () => {
         <div className="flex flex-wrap items-center gap-4">
           <div className="w-28">
             <Label htmlFor="task-priority">优先级</Label>
-            <Select value={task.priority} onValueChange={(value) => patch({ priority: value as Priority })}>
+            <Select value={task.priority} onValueChange={(value) => save({ priority: value as Priority })}>
               <SelectTrigger id="task-priority" size="sm" className="mt-1 w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {(Object.keys(PRIORITY_LABEL) as Priority[]).map((p) => <SelectItem key={p} value={p}>{PRIORITY_LABEL[p]}</SelectItem>)}
@@ -168,7 +188,7 @@ const TaskDetailPage = () => {
             <Label htmlFor="task-label-input">标签</Label>
             <Input id="task-label-input" className="mt-1" value={labelInput} placeholder="回车添加"
               onChange={(e) => setLabelInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addLabel(); } }}
+              onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ',') && !e.nativeEvent.isComposing) { e.preventDefault(); addLabel(); } }}
             />
             {task.labels.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -179,7 +199,7 @@ const TaskDetailPage = () => {
           {!isEpic && (
             <div className="w-full min-w-50 max-w-80">
               <Label htmlFor="task-epic">所属 Epic</Label>
-              <Select value={task.epic ?? '__none__'} onValueChange={(value) => patch({ epic: value === '__none__' ? undefined : value })}>
+              <Select value={task.epic ?? '__none__'} onValueChange={(value) => save({ epic: value === '__none__' ? '' : value })}>
                 <SelectTrigger id="task-epic" size="sm" className="mt-1 w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">（无）</SelectItem>
@@ -226,7 +246,7 @@ const TaskDetailPage = () => {
                   </div>
                 </div>
                 {stepView === 'kanban'
-                  ? <EpicKanban tasks={task.children ?? []} onChanged={(t) => mutate(t, false)} />
+                  ? <EpicKanban tasks={task.children ?? []} onChanged={() => mutate()} />
                   : <TaskTable rows={task.children ?? []} total={task.children?.length ?? 0} page={0} pageSize={100} onPageChange={() => {}} showProject compact />}
               </Card>
             )}

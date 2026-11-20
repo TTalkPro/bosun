@@ -9,7 +9,7 @@
 -include("bosun.hrl").
 
 -export([create/2, get/1, get_in_org/2, list/1, update/3, authenticate/2, change_password/3,
-         to_map/1, principal/2, parse_role/1]).
+         to_map/1, principal/2, parse_role/1, name_taken_by_other/3]).
 -export([create_in_tx/2, validate_name/1]).
 
 %% @doc 管理员建用户。Input: #{<<"email">>, <<"name">>, <<"password">>, <<"role">> (缺省 member)}
@@ -86,9 +86,10 @@ update(OrgId, Id, Input) when is_map(Input) ->
                 end,
                 U2 = U1#user{updated_at = bosun_util:now_ms()},
                 ok = mnesia:write(U2),
-                case U2#user.status of
-                    disabled -> bosun_session:delete_all_in_tx(Id);
-                    active -> ok
+                %% 停用、或管理员重置了密码：踢掉这个用户的全部会话
+                case U2#user.status =:= disabled orelse U2#user.password =/= U0#user.password of
+                    true -> bosun_session:delete_all_in_tx(Id);
+                    false -> ok
                 end,
                 U2;
             _ -> bosun_store:abort(not_found)
@@ -108,18 +109,39 @@ authenticate(Email0, Pw) ->
             case bosun_password:verify(Pw, U#user.password) of
                 true when U#user.status =:= disabled -> {error, user_disabled};
                 true ->
-                    U1 = U#user{last_login_at = bosun_util:now_ms()},
-                    ok = mnesia:dirty_write(U1),
-                    {ok, to_map(U1)};
+                    %% 事务里重读再写：脏写整条会把并发的停用 / 改密覆盖回去
+                    Now = bosun_util:now_ms(),
+                    {ok, U1} = bosun_store:transaction(fun() ->
+                        case mnesia:read(user, U#user.id, write) of
+                            [Cur] ->
+                                New = Cur#user{last_login_at = Now},
+                                ok = mnesia:write(New),
+                                New;
+                            [] -> U
+                        end
+                    end),
+                    case U1#user.status of
+                        disabled -> {error, user_disabled};
+                        active -> {ok, to_map(U1)}
+                    end;
                 false -> {error, invalid_credentials}
             end;
         _ ->
-            %% 不存在的邮箱也算一次哈希，别让响应时间暴露邮箱是否注册过
-            _ = bosun_password:verify(<<"x">>, bosun_password:hash(<<"x">>)),
+            %% 不存在的邮箱也算**一次**同样代价的校验，别让响应时间暴露邮箱是否注册过
+            _ = bosun_password:verify(<<"x">>, dummy_hash()),
             {error, invalid_credentials}
     end.
 
-%% @doc 用户自己改密：要给当前密码。
+dummy_hash() ->
+    case persistent_term:get({?MODULE, dummy_hash}, undefined) of
+        undefined ->
+            H = bosun_password:hash(<<"bosun-dummy-password">>),
+            persistent_term:put({?MODULE, dummy_hash}, H),
+            H;
+        H -> H
+    end.
+
+%% @doc 用户自己改密：要给当前密码。成功后该用户的**全部会话作废**（调用方给当前请求换新会话）。
 -spec change_password(binary(), term(), term()) -> ok | {error, term()}.
 change_password(Id, Current, New) ->
     case bosun_password:validate(New) of
@@ -128,8 +150,10 @@ change_password(Id, Current, New) ->
                 case mnesia:read(user, Id, write) of
                     [U] ->
                         case bosun_password:verify(Current, U#user.password) of
-                            true -> ok = mnesia:write(U#user{password = bosun_password:hash(NewPw),
-                                                            updated_at = bosun_util:now_ms()});
+                            true ->
+                                ok = mnesia:write(U#user{password = bosun_password:hash(NewPw),
+                                                         updated_at = bosun_util:now_ms()}),
+                                ok = bosun_session:delete_all_in_tx(Id);
                             false -> bosun_store:abort(invalid_credentials)
                         end;
                     [] -> bosun_store:abort(not_found)
@@ -188,6 +212,13 @@ validate_name(N0) ->
                 false -> {error, {invalid, name, <<"at most 64 characters, no line breaks">>}}
             end
     end.
+
+%% @doc 组织里是否有**别的用户**用着这个显示名（不分大小写）。MCP `identify' 用它拦冒名。
+-spec name_taken_by_other(binary(), binary(), binary() | undefined) -> boolean().
+name_taken_by_other(OrgId, Name, SelfId) ->
+    Lower = string:lowercase(bosun_util:trim(Name)),
+    lists:any(fun(#user{id = Id, name = N}) -> Id =/= SelfId andalso string:lowercase(N) =:= Lower end,
+              mnesia:dirty_index_read(user, OrgId, #user.org_id)).
 
 %%====================================================================
 

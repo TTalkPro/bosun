@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Copy } from 'lucide-react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { createKey, type CreatedApiKey } from '@/api/auth';
 import SidePanel from '@/components/SidePanel';
 import RelativeTime from '@/components/RelativeTime';
@@ -56,6 +56,7 @@ const KeyFormPanel = ({ onClose }: { onClose: () => void }) => {
       title={created ? `Key「${created.name}」已创建` : '新建 API Key'}
       onClose={onClose}
       busy={busy}
+      modal={!!created}
       actions={created
         ? <Button onClick={onClose}>我已保存，关闭</Button>
         : <><Button variant="outline" onClick={onClose} disabled={busy}>取消</Button><Button onClick={submit} disabled={busy}>创建</Button></>}

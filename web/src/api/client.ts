@@ -32,7 +32,9 @@ client.interceptors.response.use(
   (err: AxiosError<ApiErrorBody>) => {
     if (err.response) {
       const url = err.config?.url ?? '';
-      if (err.response.status === 401 && !AUTH_URLS.includes(url) && !PUBLIC_PATHS.includes(window.location.pathname)) {
+      // 只有「没登录 / 会话失效」（error = unauthorized）才跳登录页；别的 401（比如密码不对）是业务错误，交给调用方
+      const expired = err.response.status === 401 && (err.response.data?.error ?? 'unauthorized') === 'unauthorized';
+      if (expired && !AUTH_URLS.includes(url) && !PUBLIC_PATHS.includes(window.location.pathname)) {
         window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
       }
       throw new ApiError(err.response.status, err.response.data, err.message);

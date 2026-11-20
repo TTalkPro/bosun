@@ -17,7 +17,7 @@ const CodeBlock = ({ children }: { children?: ReactNode }) => {
 };
 const components: Components = {
   pre: ({ children }) => { const only = Children.toArray(children).find(isValidElement) as ReactElement<{ className?: string; children?: ReactNode }> | undefined; const lang = /language-([\w-]+)/.exec(only?.props.className ?? '')?.[1]; if (lang === 'mermaid') return <Mermaid code={textOf(only?.props.children).replace(/\n$/, '')} />; return <CodeBlock>{children}</CodeBlock>; },
-  a: ({ href, children }) => { const h = href ?? ''; if (h.startsWith('/')) return <RouterLink to={h} className="text-primary hover:underline">{children}</RouterLink>; return <a href={h} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>; },
+  a: ({ href, children }) => { const h = href ?? ''; if (h.startsWith('/') && !h.startsWith('//')) return <RouterLink to={h} className="text-primary hover:underline">{children}</RouterLink>; return <a href={h} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>; },
   input: (props) => <input {...props} disabled readOnly />,
 };
 const MarkdownView = ({ markdown, empty }: { markdown: string; empty?: ReactNode }) => {

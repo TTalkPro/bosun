@@ -44,7 +44,6 @@
     "dayjs": "^1.11.23",
     "lucide-react": "^1.62.0",
     "mermaid": "^11.17.2",
-    "notistack": "^3.0.2",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.1.0",

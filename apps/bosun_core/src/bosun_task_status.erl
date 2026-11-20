@@ -15,6 +15,8 @@
 -include("bosun.hrl").
 
 -export([parse/1, to_binary/1, all/0, allowed/2, next_statuses/1, transition/3]).
+%% 别的模块改了步骤集合 / 步骤状态（建单、换 Epic、被替代撤销）后用
+-export([sync_epics_in_tx/4, reindex_epics/1]).
 
 -type status() :: new | in_progress | done | verified | rejected | cancelled.
 -export_type([status/0]).
@@ -120,13 +122,13 @@ transition(TaskId0, To0, Opts) ->
                                                                    {_, _, Keep} -> Keep
                                                                end},
                                         ok = mnesia:write(T1),
-                                        Touched = sync_epic_in_tx(T1, Actor, Now),
+                                        Touched = sync_epics_in_tx([T1#task.epic], Actor, Now, <<"step reopened (auto)">>),
                                         {bosun_json:task_full(T1, bosun_feedback:read_in_tx(TaskId)), Touched}
                                 end
                         end
                     end) of
                         {ok, {Json, Touched}} ->
-                            reindex_epic(Touched),
+                            reindex_epics(Touched),
                             bosun_task:indexed({ok, Json});
                         {error, _} = E -> E
                     end
@@ -151,10 +153,17 @@ validate_epic_done_in_tx(_, _) -> ok.
 %% - 全部步骤 DONE / VERIFIED / CANCELLED 且至少一个 DONE / VERIFIED → Epic 自动 → DONE
 %% - DONE / VERIFIED 的 Epic 因步骤重开不再满足上一条 → 自动回 IN_PROGRESS
 %% CANCELLED / REJECTED 的 Epic 不碰。用 index_read（而非 bosun_task:children/1 的脏读）
-%% 才能看到本事务刚写入的状态。返回被改动的 Epic id（没动则 undefined），供提交后重建索引。
--spec sync_epic_in_tx(#task{}, binary(), integer()) -> undefined | binary().
-sync_epic_in_tx(#task{epic = undefined}, _Actor, _Now) -> undefined;
-sync_epic_in_tx(#task{epic = EpicId}, Actor, Now) ->
+%% 才能看到本事务刚写入的状态。
+%%
+%% 不只步骤迁移会改变结论：给已完成的 Epic 加步骤、把步骤换到别的 Epic / 摘掉、步骤被
+%% `replaces' 自动撤销，都要过一遍——调用方把受影响的 Epic id（可含 undefined / 重复）传进来，
+%% ReopenWhy 是自动回 IN_PROGRESS 时写进历史的备注。返回被改动的 Epic id，供提交后重建索引。
+-spec sync_epics_in_tx([binary() | undefined], binary(), integer(), binary()) -> [binary()].
+sync_epics_in_tx(EpicIds, Actor, Now, ReopenWhy) ->
+    [Id || Id <- lists:usort(EpicIds), Id =/= undefined,
+           sync_epic_in_tx(Id, Actor, Now, ReopenWhy) =/= undefined].
+
+sync_epic_in_tx(EpicId, Actor, Now, ReopenWhy) ->
     case mnesia:read(task, EpicId, write) of
         [#task{status = From} = Epic] when From =:= new; From =:= in_progress;
                                            From =:= done; From =:= verified ->
@@ -168,7 +177,7 @@ sync_epic_in_tx(#task{epic = EpicId}, Actor, Now) ->
                                                 updated_at = Now}),
                     EpicId;
                 {false, true} ->
-                    Entry = auto_entry(From, in_progress, Actor, <<"step reopened (auto)">>, Now),
+                    Entry = auto_entry(From, in_progress, Actor, ReopenWhy, Now),
                     ok = mnesia:write(Epic#task{status = in_progress,
                                                 history = [Entry | Epic#task.history],
                                                 updated_at = Now}),
@@ -189,12 +198,14 @@ auto_entry(From, To, Actor, Comment, Now) ->
       commits => [], tests => undefined}.
 
 %% Epic 在同一事务里被级联改了状态，提交后重建它的搜索索引（索引里带 status 元数据）
-reindex_epic(undefined) -> ok;
-reindex_epic(EpicId) ->
-    case bosun_task:get(EpicId) of
-        {ok, Epic} -> bosun_search:index_task(Epic);
-        _ -> ok
-    end.
+-spec reindex_epics([binary()]) -> ok.
+reindex_epics(EpicIds) ->
+    lists:foreach(fun(EpicId) ->
+        case bosun_task:get(EpicId) of
+            {ok, Epic} -> bosun_search:index_task(Epic);
+            _ -> ok
+        end
+    end, EpicIds).
 
 %%====================================================================
 %% 完成证据

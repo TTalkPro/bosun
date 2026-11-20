@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -30,7 +30,8 @@ const CreatedKeyDialog = ({ apiKey, title, onClose }: Props) => {
 
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      {/* 明文只显示这一次：点遮罩 / 按 Esc 不关，只能点「我已保存，关闭」 */}
+      <DialogContent className="sm:max-w-lg" onInteractOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>

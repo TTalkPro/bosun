@@ -28,6 +28,7 @@ core_test_() ->
         {"roles, commits, tests & self-verify", fun roles_and_evidence/0},
         {"epics", fun epics/0},
         {"epic auto flow", fun epic_auto_flow/0},
+        {"epic follows step membership", fun epic_membership_sync/0},
         {"search ranks label > title > body", fun search_field_ranking/0},
         {"search index rebuilt when unopenable or not ours", fun search_index_recovery/0},
         {"links", fun links/0}
@@ -434,6 +435,40 @@ search_index_recovery() ->
     {ok, _} = bosun_task:create(<<"REC">>, #{<<"title">> => <<"latecomer">>}),
     ok = bosun_search:sync(),
     {ok, [#{id := <<"REC-2">>}]} = bosun_search:search(<<"latecomer">>, #{}).
+
+%% Epic 的状态由步骤集合推导：不只步骤迁移，加步骤 / 换 Epic / 被替代撤销也要级联
+epic_membership_sync() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"EM">>, <<"name">> => <<"m">>}),
+    {ok, _} = bosun_task:create(<<"EM">>, #{<<"title">> => <<"goal">>, <<"kind">> => <<"epic">>}),
+    {ok, _} = bosun_task:create(<<"EM">>, #{<<"title">> => <<"s1">>, <<"epic">> => <<"EM-1">>}),
+    {ok, _} = bosun_task:create(<<"EM">>, #{<<"title">> => <<"s2">>, <<"epic">> => <<"EM-1">>}),
+    {ok, _} = bosun_task_status:transition(<<"EM-2">>, <<"IN_PROGRESS">>, #{actor => <<"a">>}),
+    {ok, _} = bosun_task_status:transition(<<"EM-2">>, <<"DONE">>, #{actor => <<"a">>}),
+    Status = fun(Id) -> {ok, T} = bosun_task:get(Id), maps:get(<<"status">>, T) end,
+    Last = fun(Id) -> {ok, #{<<"history">> := [H | _]}} = bosun_task:get(Id), H end,
+    ?assertEqual(<<"NEW">>, Status(<<"EM-1">>)),
+    %% 把没做完的步骤摘出去：剩下的全完成 → Epic 自动 DONE
+    {ok, _} = bosun_task:update(<<"EM-3">>, #{<<"epic">> => <<>>, <<"actor">> => <<"mover">>}),
+    ?assertEqual(<<"DONE">>, Status(<<"EM-1">>)),
+    ?assertMatch(#{<<"actor">> := <<"mover">>, <<"comment">> := <<"all steps completed (auto)">>}, Last(<<"EM-1">>)),
+    %% 再挂回来：Epic 回 IN_PROGRESS
+    {ok, _} = bosun_task:update(<<"EM-3">>, #{<<"epic">> => <<"EM-1">>}),
+    ?assertEqual(<<"IN_PROGRESS">>, Status(<<"EM-1">>)),
+    ?assertMatch(#{<<"comment">> := <<"steps changed (auto)">>}, Last(<<"EM-1">>)),
+    %% 步骤被 replaces 自动撤销：也算完成条件变化
+    {ok, _} = bosun_task:create(<<"EM">>, #{<<"title">> => <<"s2 redone elsewhere">>}),
+    {ok, _} = bosun_link:add(<<"EM-4">>, <<"EM-3">>, <<"replaces">>, #{actor => <<"a">>}),
+    ?assertEqual(<<"CANCELLED">>, Status(<<"EM-3">>)),
+    ?assertEqual(<<"DONE">>, Status(<<"EM-1">>)),
+    %% 给已完成的 Epic 新建步骤：Epic 回 IN_PROGRESS
+    {ok, _} = bosun_task:create(<<"EM">>, #{<<"title">> => <<"s3">>, <<"epic">> => <<"EM-1">>, <<"actor">> => <<"adder">>}),
+    ?assertEqual(<<"IN_PROGRESS">>, Status(<<"EM-1">>)),
+    ?assertMatch(#{<<"actor">> := <<"adder">>, <<"comment">> := <<"step added (auto)">>}, Last(<<"EM-1">>)),
+    %% 没变化的 update 不产生历史
+    {ok, #{<<"history">> := H1}} = bosun_task:get(<<"EM-1">>),
+    {ok, _} = bosun_task:update(<<"EM-5">>, #{<<"title">> => <<"s3 renamed">>}),
+    {ok, #{<<"history">> := H2}} = bosun_task:get(<<"EM-1">>),
+    ?assertEqual(length(H1), length(H2)).
 
 workflow_doc() ->
     {ok, Zh} = bosun_workflow:doc(),

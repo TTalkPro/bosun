@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { transitionTask } from '@/api/tasks';
 import { useMe } from '@/api/auth';
 import type { Status, Task } from '@/api/types';
@@ -50,8 +50,7 @@ const CompletePanel = ({ task, to, onClose, onChanged }: Props) => {
       onChanged?.(t);
       onClose();
     } catch (e) {
-      const { field, message } = handleError(e);
-      if (field) enqueueSnackbar(message, { variant: 'error' });
+      handleError(e);
     } finally {
       setBusy(false);
     }

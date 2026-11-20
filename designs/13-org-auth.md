@@ -36,7 +36,8 @@ actor      + org_id · user_id   （人 = 用户本人；Agent = 用的哪把 ke
 - 会话 token：32 字节随机，base64url；表里只存 sha256。30 天不活动过期；登录时顺手清掉该用户过期会话。
 - API Key：`bsk_` + 40 位十六进制（20 字节随机）。**只在创建 / 轮换时返回一次**；表里存 sha256 与前缀。撤销 = 写 `revoked_at`，不删（历史可查）。轮换只替换秘密值并保留权限配置与 `created_at`，写 `rotated_at` 并清空 `last_used_at`；旧秘密值立即失效。`last_used_at` 每分钟最多写一次。
   - `scopes`：`read` / `write` / `manage` 的有序集合；新 key 缺省只读。`*` 与缺失 `scopes` 的旧 key 表示全量权限。`identify` / `whoami` 始终可用。
-  - `project_keys`：项目 key 白名单；`undefined` / 空列表表示组织内全部项目。不可见项目按 `not_found` 处理。
+  - `project_keys`：项目 key 白名单；`undefined` / 空列表 / 含 `*` 表示组织内全部项目。不可见项目按 `not_found` 处理——任务、检索、BQL 之外，项目列表 / 详情 / 修改与导出也只给白名单里的（`bosun_scope:project_allowed/1`）。
+  - `last_used_at`、会话的 `last_seen_at`、用户的 `last_login_at` 都在事务里**重读再写**：脏写整条记录会把并发的撤销 / 轮换 / 登出 / 停用覆盖回去（撤销了的 key 又活过来）。
   - `expires_at`：未来 Unix 毫秒时间戳；到期认证返回 401。
 - 验证码：`crypto:strong_rand_bytes` 派生 6 位数字；同一邮箱 60 秒内不重发；错 5 次作废；注册成功即删。
 - 邮箱格式：`^[^@\s]+@[^@\s]+\.[^@\s]+$` 且 ≤ 254 字符，统一小写。
@@ -84,7 +85,11 @@ actor      + org_id · user_id   （人 = 用户本人；Agent = 用的哪把 ke
 | 缺省 | 其余 `/api/v1/*` | Cookie 会话或 Bearer；通过后 `bosun_scope:set(P)`，并放进 `Req` 的 `bosun_principal` |
 | `admin` | `/api/v1/users*`、`/api/v1/org`、`/api/v1/export`、`/api/v1/import` | 同上且 role = admin，否则 403 |
 
-Bearer key 的 REST 写接口与 MCP 共用 scope：任务协作要求 `write`，项目 / 用户 / key / filter / 导入 / 改密要求 `manage`；不足返回 403 `forbidden_scope`。Cookie 会话仍代表用户本人，不按 key scope 降权。
+Bearer key 的 REST 写接口与 MCP 共用 scope：任务协作要求 `write`，项目 / 用户 / key / filter / 导入 / 改密要求 `manage`；不足返回 403 `forbidden_scope`。Cookie 会话仍代表用户本人，不按 key scope 降权。**没登记的非只读方法一律要 `manage`**（缺省拒绝）：以前缺省放行，而 key handler 只看有没有 `:id`，只读 key 可以 `POST /keys/:id` 轮换出别的 key 的明文。现在 `/keys`、`/keys/:id`（只 DELETE）、`/keys/:id/rotate`（只 POST）按路由 mode 分开。
+
+改密（`POST /auth/password`）与管理员重置密码会作废该用户的**全部会话**；自己改密的那个请求在响应里拿到新 Cookie。当前密码不对回 400 `field=current`（不是 401——401 只表示没登录 / 会话失效，前端据此跳登录页）。
+
+请求体上限 8 MB（`/import` 256 MB），超过回 413；以前没有总上限，不用登录的登录 / 注册接口也能被一个超大 body 撑爆内存。
 
 未通过：401 `{"error":"unauthorized"}`，`/mcp` 另带 `WWW-Authenticate: Bearer`。
 
@@ -113,6 +118,7 @@ DELETE /api/v1/keys/:id                                                        �
 - `bosun_identity` 身份里多 `user`（主体）；`identify` 不覆盖它。`whoami` 返回 `user: {id, name, email, org}`。
 - `bosun_mcp:tools/0` 给每个 handler 套一层：调用前 `bosun_scope:set(主体)`，并按工具检查 key scope。资源 / 提示按 `read` 授权；错误返回 `forbidden_scope`。
 - 已绑定主体的 MCP 会话不能在参数里传 `actor` / `author` 冒名；返回 `forbidden_actor_override`。系统作用域（运维脚本 / 纯领域测试）保持旧兼容。
+- 同理，已绑定主体的会话 `identify` 不能取组织里**别的用户**的显示名（署名就是身份：只有原作者能修订 feedback、自验收看 assignee）；自己的名字和任意 Agent 名照旧。
 - `.mcp.json`：`"headers": {"Authorization": "Bearer ${BOSUN_API_KEY}"}`；README 写明先在「账户」页建 key、`export BOSUN_API_KEY=...`。
 
 ## 5. 前端（web/）

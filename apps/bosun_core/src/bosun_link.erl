@@ -47,10 +47,17 @@ add(From0, To0, Type0, Opts) ->
                 Now = bosun_util:now_ms(),
                 ok = mnesia:write(#link{key = {From, To, Type}, from = From, to = To, type = Type,
                                         actor = Actor, created_at = Now}),
-                Type =:= replaces andalso cancel_replaced(ToTask, From, Actor, Now),
-                ok
+                case Type of
+                    replaces -> cancel_replaced(ToTask, From, Actor, Now);
+                    depends_on -> []
+                end
             end),
-            after_commit(Res, From, To);
+            case Res of
+                {ok, Touched} ->
+                    bosun_task_status:reindex_epics(Touched),
+                    after_commit({ok, ok}, From, To);
+                {error, _} = E -> E
+            end;
         {{error, _}, _, _} -> {error, {invalid, from, <<"expected a task id like BOS-12">>}};
         {_, {error, _}, _} -> {error, {invalid, to, <<"expected a task id like BOS-12">>}};
         {_, _, {error, _} = E} -> E
@@ -134,30 +141,38 @@ read_or_abort(Id, Field) ->
 
 %% From depends_on To：若沿 depends_on 从 To 能走到 From，就成环
 check_cycle(From, To) ->
-    case path(To, From, [To], #{}) of
-        false -> ok;
+    case path(To, From, [To], #{To => true}) of
+        {false, _} -> ok;
         {true, Path} -> bosun_store:abort({cycle, [From | lists:reverse(Path)] ++ [From]})
     end.
 
-path(Cur, Target, Path, Seen) ->
+%% 深度优先；Seen 在兄弟分支之间传递（走过的节点不再走，菱形依赖图不会指数爆炸）
+path(Cur, Target, Path, Seen0) ->
     Next = [L#link.to || #link{type = depends_on} = L <- mnesia:index_read(link, Cur, #link.from)],
     case lists:member(Target, Next) of
         true -> {true, Path};
         false ->
-            lists:foldl(fun(_, {true, _} = Found) -> Found;
-                           (N, false) ->
-                               case maps:is_key(N, Seen) of
-                                   true -> false;
-                                   false -> path(N, Target, [N | Path], Seen#{N => true})
-                               end
-                        end, false, Next)
+            Res = lists:foldl(fun(_, {true, _} = Found) -> Found;
+                                 (N, {false, Seen}) ->
+                                     case maps:is_key(N, Seen) of
+                                         true -> {false, Seen};
+                                         false ->
+                                             case path(N, Target, [N | Path], Seen#{N => true}) of
+                                                 {true, _} = Found -> Found;
+                                                 {false, Seen1} -> {false, Seen1}
+                                             end
+                                     end
+                              end, {false, Seen0}, Next),
+            Res
     end.
 
+%% 返回因此被级联改动的 Epic id（被撤销的是某个 Epic 的步骤时，Epic 可能就此完成）
 cancel_replaced(#task{status = S} = T, By, Actor, Now) when S =:= new; S =:= in_progress ->
     Entry = #{from => S, to => cancelled, actor => Actor,
               comment => <<"replaced by ", By/binary>>, at => Now, commits => [], tests => undefined},
-    ok = mnesia:write(T#task{status = cancelled, history = [Entry | T#task.history], updated_at = Now});
-cancel_replaced(_, _, _, _) -> ok.
+    ok = mnesia:write(T#task{status = cancelled, history = [Entry | T#task.history], updated_at = Now}),
+    bosun_task_status:sync_epics_in_tx([T#task.epic], Actor, Now, <<"steps changed (auto)">>);
+cancel_replaced(_, _, _, _) -> [].
 
 %% blocked / links 是脏读派生的，事务里看不到自己的写，所以提交后再取详情；
 %% 对端可能被撤销，顺手重建两边的索引

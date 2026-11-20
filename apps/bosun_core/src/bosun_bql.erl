@@ -69,7 +69,9 @@ parse(Bin) when is_binary(Bin) ->
         Order = parse_order(Rest),
         {ok, #{where => Where, order => Order}}
     catch
-        throw:{bql, Msg} -> {error, {invalid, query, Msg}}
+        throw:{bql, Msg} -> {error, {invalid, query, Msg}};
+        %% 非法 UTF-8 之类词法 / 归一化里没预料到的输入：也算查询写错，不是 500
+        error:_ -> {error, {invalid, query, <<"malformed query">>}}
     end.
 
 %% @doc 执行。Opts（binary 键）: limit（缺省 100，上限 500）、offset
@@ -77,17 +79,22 @@ parse(Bin) when is_binary(Bin) ->
 query(Bin, Opts) ->
     case parse(bosun_util:to_binary(Bin)) of
         {ok, #{where := Where, order := Order}} ->
-            Ctx = prepare(Where),
-            All = bosun_task:visible(mnesia:dirty_select(task, [{'_', [], ['$_']}])),
-            Matched = [T || T <- All, eval(Where, T, Ctx)],
-            Sorted = sort(Matched, Order, Ctx),
-            Limit = clamp(to_int(maps:get(<<"limit">>, Opts, 100), 100), 1, 500),
-            Offset = max(0, to_int(maps:get(<<"offset">>, Opts, 0), 0)),
-            Page = lists:sublist(Sorted, Offset + 1, Limit),
-            {ok, #{<<"tasks">> => [bosun_json:task_summary(T, feedback_of(T, Ctx)) || T <- Page],
-                   <<"total">> => length(Matched),
-                   <<"order">> => [#{<<"field">> => atom_to_binary(F, utf8), <<"dir">> => atom_to_binary(D, utf8)}
-                                   || {F, D} <- effective_order(Order, Ctx)]}};
+            try
+                Ctx = prepare(Where),
+                All = bosun_task:visible(mnesia:dirty_select(task, [{'_', [], ['$_']}])),
+                Matched = [T || T <- All, eval(Where, T, Ctx)],
+                Sorted = sort(Matched, Order, Ctx),
+                Limit = clamp(to_int(maps:get(<<"limit">>, Opts, 100), 100), 1, 500),
+                Offset = max(0, to_int(maps:get(<<"offset">>, Opts, 0), 0)),
+                Page = lists:sublist(Sorted, Offset + 1, Limit),
+                {ok, #{<<"tasks">> => [bosun_json:task_summary(T, feedback_of(T, Ctx)) || T <- Page],
+                       <<"total">> => length(Matched),
+                       <<"order">> => [#{<<"field">> => atom_to_binary(F, utf8), <<"dir">> => atom_to_binary(D, utf8)}
+                                       || {F, D} <- effective_order(Order, Ctx)]}}
+            catch
+                %% 解析阶段该拦的都拦了；万一求值时才发现组合不支持，也回可读的错误而不是 500
+                throw:{bql, Msg} -> {error, {invalid, query, Msg}}
+            end;
         {error, _} = E -> E
     end.
 
@@ -185,11 +192,20 @@ parse_cond(Field, [{kw, <<"NOT">>}, {kw, <<"IN">>}, lparen | R]) ->
     {Vs, R2} = parse_list(R, []),
     {{c, Field, not_in, [coerce(Field, in, V) || V <- Vs]}, R2};
 parse_cond(Field, [{kw, <<"IS">>}, {kw, <<"NOT">>}, {kw, E} | R]) when E =:= <<"EMPTY">>; E =:= <<"NULL">> ->
-    {{'not', {c, Field, empty, true}}, R};
+    {{'not', {c, check_empty(Field), empty, true}}, R};
 parse_cond(Field, [{kw, <<"IS">>}, {kw, E} | R]) when E =:= <<"EMPTY">>; E =:= <<"NULL">> ->
-    {{c, Field, empty, true}, R};
+    {{c, check_empty(Field), empty, true}, R};
 parse_cond(Field, _) ->
     throw({bql, <<"expected an operator after '", (atom_to_binary(Field, utf8))/binary, "'">>}).
+
+%% IS [NOT] EMPTY 只对可能为空的字段有意义；别的字段解析时就拒绝
+%% （以前要到逐条求值才抛，库里有任务时是 500，没任务时又「正常」）
+check_empty(Field) ->
+    case lists:member(Field, [labels, assignee, epic, depends_on, blocks, replaces, replaced_by,
+                              description, feedback]) of
+        true -> Field;
+        false -> throw({bql, <<"IS EMPTY not supported for ", (atom_to_binary(Field, utf8))/binary>>})
+    end.
 
 parse_value([{word, W} | R]) -> {W, R};
 parse_value([{str, S} | R]) -> {S, R};
@@ -302,8 +318,12 @@ date_ms(V0) ->
             case re:run(V, "^(\\d{4})-(\\d{2})-(\\d{2})(?:t(\\d{2}):(\\d{2})(?::(\\d{2}))?)?$", [{capture, all_but_first, binary}]) of
                 {match, [Y, Mo, D | Rest]} ->
                     [H, Mi, S] = pad3([binary_to_integer(X) || X <- Rest, X =/= <<>>]),
-                    Secs = calendar:datetime_to_gregorian_seconds(
-                             {{binary_to_integer(Y), binary_to_integer(Mo), binary_to_integer(D)}, {H, Mi, S}})
+                    Date = {binary_to_integer(Y), binary_to_integer(Mo), binary_to_integer(D)},
+                    case calendar:valid_date(Date) andalso H < 24 andalso Mi < 60 andalso S < 60 of
+                        true -> ok;
+                        false -> throw({bql, <<"invalid date '", V0/binary, "' (no such day or time)">>})
+                    end,
+                    Secs = calendar:datetime_to_gregorian_seconds({Date, {H, Mi, S}})
                            - calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}}),
                     Secs * 1000;
                 nomatch -> throw({bql, <<"invalid date '", V0/binary, "' (use 2026-09-01, -7d, now)">>})
@@ -352,6 +372,7 @@ test(id, match, V, T, _) -> binary:match(T#task.id, V) =/= nomatch;
 test(id, nmatch, V, T, _) -> binary:match(T#task.id, V) =:= nomatch;
 test(id, Op, V, T, _) -> cmp(Op, T#task.id, V);
 test(status, Op, V, T, _) -> cmp(Op, T#task.status, V);
+test(priority, Op, Vs, T, _) when Op =:= in; Op =:= not_in -> cmp(Op, T#task.priority, Vs);
 test(priority, Op, V, T, _) -> cmp_ord(Op, prio_rank(T#task.priority), prio_rank(V));
 test(labels, empty, _, T, _) -> T#task.labels =:= [];
 test(labels, eq, V, T, _) -> lists:member(V, lower(T#task.labels));

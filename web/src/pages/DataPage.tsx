@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { CheckCircle2, Download, Upload } from 'lucide-react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { mutate } from 'swr';
 import { client } from '@/api/client';
 import ConfirmDialog from '@/components/ConfirmDialog';

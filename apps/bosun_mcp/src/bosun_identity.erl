@@ -49,13 +49,25 @@ identify(Args) ->
                        {ok, #{user := U}} -> U;
                        _ -> undefined
                    end,
-            Id = #{name => Name, kind => Kind, project => Project, worktree => Worktree, explicit => true, user => User},
-            ok = gen_server:call(?MODULE, {set, self(), Id}),
-            ok = bosun_scope:with(User, fun() ->
-                bosun_actor:touch(Name, Kind, #{project => Project, worktree => Worktree})
-            end),
-            {ok, Id}
+            case impersonates(Name, User) of
+                true ->
+                    {error, {invalid, name, <<"is the display name of another user in this organization; pick a name like <project>/<worktree>">>}};
+                false ->
+                    Id = #{name => Name, kind => Kind, project => Project, worktree => Worktree, explicit => true, user => User},
+                    ok = gen_server:call(?MODULE, {set, self(), Id}),
+                    ok = bosun_scope:with(User, fun() ->
+                        bosun_actor:touch(Name, Kind, #{project => Project, worktree => Worktree})
+                    end),
+                    {ok, Id}
+            end
     end.
+
+%% 署名就是身份（只有原作者能修订 feedback、自验收看 assignee）：绑定了 API key 的会话不能
+%% 自称组织里**别的用户**的显示名。自己的名字、任意 Agent 名照旧。
+impersonates(Name, #{org_id := OrgId, user_id := UserId}) ->
+    bosun_user:name_taken_by_other(OrgId, Name, UserId);
+impersonates(_Name, _NoPrincipal) ->
+    false.
 
 %% @doc 把主体（API key 的主人）绑到会话进程；identify 过的名字保留。
 -spec bind(pid(), bosun_scope:principal()) -> ok.

@@ -5,7 +5,9 @@
 backup_test_() ->
     {foreach, fun bosun_test_env:setup/0, fun(_) -> ok end, [
         fun(_) -> {"round trip", fun round_trip/0} end,
-        fun(_) -> {"bad input", fun bad_input/0} end
+        fun(_) -> {"bad input", fun bad_input/0} end,
+        fun(_) -> {"merge never moves sequences backwards", fun merge_keeps_sequences/0} end,
+        fun(_) -> {"malformed records rejected", fun malformed_records/0} end
     ]}.
 
 seed() ->
@@ -63,6 +65,60 @@ round_trip() ->
     {ok, _} = bosun_backup:import_file(Path, #{mode => replace}),
     {ok, #{<<"tasks">> := Ts}} = bosun_task:list(<<"BK">>, #{}),
     ?assertEqual(4, length(Ts)).
+
+%% merge 一个旧导出：项目 / 任务的序号不能回退，否则新建的任务、反馈会和已有的撞号并覆盖
+merge_keeps_sequences() ->
+    seed(),
+    {ok, Old} = bosun_backup:export(),
+    {ok, #{<<"id">> := <<"BK-4">>}} = bosun_task:create(<<"BK">>, #{<<"title">> => <<"after the export">>}),
+    {ok, #{<<"id">> := <<"BK-1#3">>}} = bosun_feedback:add(<<"BK-1">>, #{<<"content">> => <<"after the export">>}),
+    {ok, _} = bosun_backup:import(Old, #{mode => merge}),
+    {ok, #{<<"title">> := <<"after the export">>}} = bosun_task:get(<<"BK-4">>),
+    {ok, #{<<"id">> := <<"BK-5">>}} = bosun_task:create(<<"BK">>, #{<<"title">> => <<"next">>}),
+    {ok, #{<<"title">> := <<"after the export">>}} = bosun_task:get(<<"BK-4">>),
+    {ok, #{<<"id">> := <<"BK-1#4">>}} = bosun_feedback:add(<<"BK-1">>, #{<<"content">> => <<"next">>}),
+    {ok, #{<<"content">> := <<"after the export">>}} = bosun_feedback:get(<<"BK-1#3">>),
+    %% 文件里的序号比实际任务小（手改过 / 旧 bug 留下的）：按实际最大序号修正
+    Low = Old#{<<"projects">> := [P#{<<"task_seq">> := 0} || P <- maps:get(<<"projects">>, Old)],
+               <<"tasks">> := [T#{<<"feedback_seq">> := 0} || T <- maps:get(<<"tasks">>, Old)]},
+    ok = bosun_store:reset_tables(),
+    {ok, _} = bosun_backup:import(Low, #{mode => replace}),
+    {ok, #{<<"id">> := <<"BK-4">>}} = bosun_task:create(<<"BK">>, #{<<"title">> => <<"four">>}),
+    {ok, #{<<"id">> := <<"BK-1#3">>}} = bosun_feedback:add(<<"BK-1">>, #{<<"content">> => <<"three">>}),
+    %% 只带反馈、挂到库里已有的任务上：任务的 feedback_seq 也跟着走
+    Only = #{<<"format">> => <<"bosun-export">>, <<"version">> => 2,
+             <<"feedback">> => [#{<<"id">> => <<"BK-2#7">>, <<"task_id">> => <<"BK-2">>, <<"seq">> => 7, <<"content">> => <<"late">>}]},
+    {ok, _} = bosun_backup:import(Only, #{mode => merge}),
+    {ok, #{<<"id">> := <<"BK-2#8">>}} = bosun_feedback:add(<<"BK-2">>, #{<<"content">> => <<"eight">>}).
+
+%% 字段类型 / id 自洽性不对的记录整批拒绝，什么都不写
+malformed_records() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"MF">>, <<"name">> => <<"m">>}),
+    Base = #{<<"format">> => <<"bosun-export">>, <<"version">> => 2},
+    T = #{<<"id">> => <<"MF-1">>, <<"project_key">> => <<"MF">>, <<"seq">> => 1, <<"title">> => <<"t">>},
+    Reject = fun(Data) ->
+        ?assertMatch({error, {invalid, data, _}}, bosun_backup:import(maps:merge(Base, Data), #{})),
+        ?assertEqual({error, not_found}, bosun_task:get(<<"MF-1">>))
+    end,
+    Reject(#{<<"tasks">> => [T#{<<"labels">> => <<"not-a-list">>}]}),
+    Reject(#{<<"tasks">> => [T#{<<"title">> := 42}]}),
+    Reject(#{<<"tasks">> => [T#{<<"seq">> := 2}]}),                          %% id 与 seq 不符
+    Reject(#{<<"tasks">> => [T#{<<"project_key">> := <<"ZZ">>}]}),           %% id 与项目不符
+    Reject(#{<<"tasks">> => [T#{<<"history">> => [#{<<"to">> => <<"NEW">>, <<"at">> => <<"yesterday">>}]}]}),
+    Reject(#{<<"tasks">> => [T#{<<"epic">> => <<"not an id">>}]}),
+    Reject(#{<<"tasks">> => <<"oops">>}),
+    Reject(#{<<"tasks">> => [T], <<"feedback">> => [#{<<"id">> => <<"MF-1#2">>, <<"task_id">> => <<"MF-1">>, <<"seq">> => 1, <<"content">> => <<"x">>}]}),
+    Reject(#{<<"tasks">> => [T], <<"feedback">> => [#{<<"id">> => <<"MF-9#1">>, <<"task_id">> => <<"MF-9">>, <<"seq">> => 1, <<"content">> => <<"x">>}]}),
+    Reject(#{<<"tasks">> => [T], <<"projects">> => [#{<<"key">> => <<"bad key">>, <<"name">> => <<"x">>}]}),
+    Reject(#{<<"tasks">> => [T], <<"projects">> => [#{<<"key">> => <<"MF">>, <<"name">> => <<"x">>, <<"task_seq">> => -1}]}),
+    Reject(#{<<"tasks">> => [T], <<"links">> => [#{<<"from">> => <<"MF-1">>, <<"to">> => <<"nope">>, <<"type">> => <<"depends_on">>}]}),
+    %% 任务指向一个既不在文件里、库里也没有的项目
+    ?assertMatch({error, {invalid, data, <<"refers to unknown project NOPE">>}},
+                 bosun_backup:import(Base#{<<"tasks">> => [#{<<"id">> => <<"NOPE-1">>, <<"project_key">> => <<"NOPE">>, <<"seq">> => 1, <<"title">> => <<"t">>}]}, #{})),
+    %% 合法的照常进
+    {ok, _} = bosun_backup:import(Base#{<<"tasks">> => [T]}, #{}),
+    {ok, #{<<"title">> := <<"t">>}} = bosun_task:get(<<"MF-1">>),
+    {ok, #{<<"task_count">> := 1}} = bosun_project:get(<<"MF">>).
 
 bad_input() ->
     ?assertMatch({error, {invalid, data, _}}, bosun_backup:import(#{<<"format">> => <<"x">>}, #{})),

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Pencil, Plus } from 'lucide-react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { Navigate } from 'react-router';
 import { updateOrg, useMe, useUsers, type User } from '@/api/auth';
 import { ActorAvatar } from '@/components/ActorChip';

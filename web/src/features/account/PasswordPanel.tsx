@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { changePassword } from '@/api/auth';
-import { isApiError } from '@/api/client';
 import SidePanel from '@/components/SidePanel';
 import { useApiError } from '@/components/useApiError';
 import { Button } from '@/components/ui/button';
@@ -57,8 +56,10 @@ const PasswordPanel = ({ onClose }: { onClose: () => void }) => {
       enqueueSnackbar('密码已修改', { variant: 'success' });
       onClose();
     } catch (e) {
-      if (isApiError(e) && e.status === 401) setErrors({ current: '当前密码不对' });
-      else { const { field, message } = handleError(e); if (field === 'password') setErrors({ next: message }); }
+      // 后端对「当前密码不对」回 400 field=current（不是 401：401 只表示会话失效）
+      const { field, message } = handleError(e, ['current', 'password']);
+      if (field === 'current') setErrors({ current: '当前密码不对' });
+      else if (field === 'password') setErrors({ next: message });
     } finally {
       setBusy(false);
     }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { transitionTask } from '@/api/tasks';
 import type { Status, Task } from '@/api/types';
 import { useApiError } from '@/components/useApiError';

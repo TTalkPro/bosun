@@ -6,8 +6,11 @@
 -module(bosun_web_api).
 
 -export([init/2]).
--export([read_json/1, reply/3, reply_result/3, reply_error/2, error_to_http/1,
-         query_map/1, with_body/2, method_not_allowed/2]).
+-export([read_json/1, read_json/2, reply/3, reply_result/3, reply_error/2, error_to_http/1,
+         query_map/1, with_body/2, with_body/3, method_not_allowed/2]).
+
+%% 请求体上限：普通接口 8MB（markdown 描述绰绰有余），整库导入单独放到 256MB
+-define(MAX_BODY, 8 * 1024 * 1024).
 
 %% 兜底：/api 下没匹配的路径
 init(Req, State) ->
@@ -15,12 +18,17 @@ init(Req, State) ->
 
 %% @doc 读取并解析 JSON body。空 body 视为 #{}。
 -spec read_json(cowboy_req:req()) -> {ok, map(), cowboy_req:req()} | {error, term(), cowboy_req:req()}.
-read_json(Req0) ->
-    %% 导入整库 JSON 可能很大：一次读完，上限 256MB
-    {ok, Body, Req} = read_all(Req0, <<>>),
-    case Body of
-        <<>> -> {ok, #{}, Req};
-        _ ->
+read_json(Req0) -> read_json(Req0, ?MAX_BODY).
+
+%% @doc 同上，body 总长超过 Max 字节回 `{too_large, Max}'（413）。以前逐块累加没有总上限，
+%% 任何 JSON 接口（包括不用登录的登录 / 注册）都能被一个超大 body 撑爆内存。
+-spec read_json(cowboy_req:req(), pos_integer()) -> {ok, map(), cowboy_req:req()} | {error, term(), cowboy_req:req()}.
+read_json(Req0, Max) ->
+    case too_large(Req0, Max) orelse read_all(Req0, Max, []) of
+        true -> {error, {too_large, Max}, Req0};
+        {error, too_large, Req} -> {error, {too_large, Max}, Req};
+        {ok, <<>>, Req} -> {ok, #{}, Req};
+        {ok, Body, Req} ->
             case bosun_json:decode(Body) of
                 {ok, Map} when is_map(Map) -> {ok, Map, Req};
                 {ok, _} -> {error, {invalid, body, <<"expected a JSON object">>}, Req};
@@ -28,15 +36,25 @@ read_json(Req0) ->
             end
     end.
 
-read_all(Req0, Acc) ->
-    case cowboy_req:read_body(Req0, #{length => 268435456, period => 30000}) of
-        {ok, Data, Req} -> {ok, <<Acc/binary, Data/binary>>, Req};
-        {more, Data, Req} -> read_all(Req, <<Acc/binary, Data/binary>>)
+%% 声明了 content-length 的直接按声明拒绝，不用读
+too_large(Req, Max) ->
+    case cowboy_req:body_length(Req) of
+        Len when is_integer(Len) -> Len > Max;
+        undefined -> false
+    end.
+
+read_all(Req0, Left, Acc) ->
+    case cowboy_req:read_body(Req0, #{length => 8 * 1024 * 1024, period => 30000}) of
+        {_, Data, Req} when byte_size(Data) > Left -> {error, too_large, Req};
+        {ok, Data, Req} -> {ok, iolist_to_binary(lists:reverse([Data | Acc])), Req};
+        {more, Data, Req} -> read_all(Req, Left - byte_size(Data), [Data | Acc])
     end.
 
 %% @doc 读 body 后交给 Fun(Map, Req)；解析失败直接回 400。
-with_body(Req0, Fun) ->
-    case read_json(Req0) of
+with_body(Req0, Fun) -> with_body(Req0, ?MAX_BODY, Fun).
+
+with_body(Req0, Max, Fun) ->
+    case read_json(Req0, Max) of
         {ok, Map, Req} -> Fun(Map, Req);
         {error, Reason, Req} -> reply_error(Req, Reason)
     end.
@@ -124,6 +142,9 @@ error_to_http({mail_failed, Why}) ->
     {502, #{<<"error">> => <<"mail_failed">>, <<"message">> => <<"could not send the verification email">>}};
 error_to_http(last_admin) ->
     {409, #{<<"error">> => <<"last_admin">>, <<"message">> => <<"the organization must keep at least one active admin">>}};
+error_to_http({too_large, Max}) ->
+    {413, #{<<"error">> => <<"too_large">>,
+            <<"message">> => <<"request body too large (max ", (integer_to_binary(Max div (1024 * 1024)))/binary, " MB)">>}};
 error_to_http(search_unavailable) ->
     {503, #{<<"error">> => <<"search_unavailable">>, <<"message">> => <<"search index is not available">>}};
 error_to_http(method_not_allowed) ->

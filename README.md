@@ -121,7 +121,7 @@ claude mcp add --transport http --scope user bosun http://127.0.0.1:4000/mcp \
 | GET | `/api/v1/auth/me`（`{user, org, via}`） |
 | GET / PATCH | `/api/v1/org`（PATCH admin） |
 | GET / POST | `/api/v1/users`；GET / PATCH `/api/v1/users/:id`（admin；`name role status password`） |
-| GET / POST | `/api/v1/keys`（POST 返回明文 `key`，仅一次）；DELETE `/api/v1/keys/:id`（撤销） |
+| GET / POST | `/api/v1/keys`（POST 返回明文 `key`，仅一次）；DELETE `/api/v1/keys/:id`（撤销）；POST `/api/v1/keys/:id/rotate`（轮换，返回新明文） |
 | GET | `/api/v1/actors` |
 | GET | `/api/v1/workflow.md?lang=zh\|en`（协作工作流文档，`text/markdown`） |
 | GET | `/api/v1/search?q=&project=&limit=` |

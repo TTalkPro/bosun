@@ -1,10 +1,10 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { CircleHelp } from 'lucide-react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { cn } from '@/lib/utils';
 import { transitionTask } from '@/api/tasks';
-import type { Status, Task, TaskSummary } from '@/api/types';
+import type { Status, TaskSummary } from '@/api/types';
 import ActorChip from '@/components/ActorChip';
 import BlockedChip from '@/components/BlockedChip';
 import StatusChip from '@/components/StatusChip';
@@ -15,8 +15,9 @@ import { paths } from '@/routes/paths';
 
 interface Props {
   tasks: TaskSummary[];
-  /** 后端返回成功后同步详情缓存；失败时由详情缓存回滚 */
-  onChanged: (task: Task) => void;
+  /** 步骤迁移成功后重新拉 Epic 详情（后端会级联 Epic 自己的状态与进度）。
+   *  注意迁移接口返回的是**步骤**，不能拿它去覆盖 Epic 的缓存。 */
+  onChanged: () => unknown;
 }
 
 /**
@@ -47,12 +48,12 @@ const EpicKanban = ({ tasks, onChanged }: Props) => {
     setMoves((prev) => ({ ...prev, [id]: to }));
     setPending((prev) => prev.includes(id) ? prev : [...prev, id]);
     try {
-      const task = await transitionTask(id, to);
-      onChanged(task);
+      await transitionTask(id, to);
+      // 等 Epic 详情拉回来再撤掉乐观状态，卡片不会先跳回旧列
+      await onChanged();
       enqueueSnackbar(`已移动到${STATUS_LABEL[to]}`, { variant: 'success' });
     } catch (e) {
       handleError(e);
-      throw e;
     } finally {
       setMoves((prev) => {
         const next = { ...prev };

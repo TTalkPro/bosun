@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { createProject, updateProject } from '@/api/projects';
 import type { Project } from '@/api/types';
 import MarkdownEditor from '@/components/markdown/MarkdownEditor';
@@ -48,9 +48,8 @@ const ProjectFormDialog = ({ open, onClose, project, onSaved }: Props) => {
       onSaved?.(saved);
       onClose();
     } catch (e) {
-      const { field, message } = handleError(e);
-      if (field === 'key' || field === 'name') setErrors({ [field]: message });
-      else if (field) enqueueSnackbar(message, { variant: 'error' });
+      const { field, message } = handleError(e, ['key', 'name']);
+      if (field) setErrors({ [field]: message });
     } finally {
       setBusy(false);
     }

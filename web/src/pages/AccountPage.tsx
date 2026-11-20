@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { KeyRound, Plus } from 'lucide-react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { rotateKey, revokeKey, useKeys, useMe, type ApiKey, type CreatedApiKey } from '@/api/auth';
 import { ActorAvatar } from '@/components/ActorChip';
 import ConfirmDialog from '@/components/ConfirmDialog';

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { addFeedback, reviseFeedback } from '@/api/feedback';
 import type { Feedback, FeedbackKind } from '@/api/types';
 import MarkdownEditor from '@/components/markdown/MarkdownEditor';

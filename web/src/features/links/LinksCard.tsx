@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Link2, Lock, X } from 'lucide-react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { removeLink } from '@/api/tasks';
 import type { Task, TaskLink } from '@/api/types';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -45,9 +45,10 @@ const LinksCard = ({ task, onChanged }: Props) => {
     const [from, to] = ends(removing);
     setBusy(true);
     try {
+      // removeLink 已经把两端任务的详情缓存更新 / 失效了；别再拿本地旧快照盖回去
+      // （blocked、对端状态都是服务端算的，旧快照会让「被阻塞」多挂到下一次轮询）
       await removeLink(from, to, removing.type);
       enqueueSnackbar('关联已删除', { variant: 'success' });
-      onChanged?.({ ...task, links: task.links.filter((l) => l !== removing) });
     } catch (e) {
       handleError(e);
     } finally {

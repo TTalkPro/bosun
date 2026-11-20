@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { createFilter, updateFilter, type SavedFilter } from '@/api/query';
 import SidePanel from '@/components/SidePanel';
 import { useApiError } from '@/components/useApiError';
@@ -37,8 +37,8 @@ const FilterFormPanel = ({ query, editing, onClose, onSaved }: Props) => {
       onSaved(f);
       onClose();
     } catch (e) {
-      const { field, message } = handleError(e);
-      if (field === 'name' || field === 'query') setErrors({ [field]: message });
+      const { field, message } = handleError(e, ['name', 'query']);
+      if (field) setErrors({ [field]: message });
     } finally {
       setBusy(false);
     }

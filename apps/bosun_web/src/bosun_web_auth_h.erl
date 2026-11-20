@@ -62,10 +62,21 @@ handle(me, <<"GET">>, Req) ->
 handle(me, _, Req) -> method_not_allowed(Req, <<"GET">>);
 
 handle(password, <<"POST">>, Req) ->
-    #{user_id := Uid} = bosun_web_auth:principal(Req),
+    #{user_id := Uid, via := Via} = bosun_web_auth:principal(Req),
     with_body(Req, fun(Body, Req1) ->
         case bosun_user:change_password(Uid, maps:get(<<"current">>, Body, <<>>), maps:get(<<"new">>, Body, <<>>)) of
-            ok -> cowboy_req:reply(204, #{}, <<>>, Req1);
+            ok ->
+                %% 改密把该用户的会话全作废了（别处登录的都要重新登录）；当前浏览器换一个新会话
+                Req2 = case Via of
+                           session ->
+                               {ok, Token} = bosun_session:create(Uid),
+                               bosun_web_auth:set_session_cookie(Token, Req1);
+                           _ -> Req1
+                       end,
+                cowboy_req:reply(204, #{}, <<>>, Req2);
+            %% 当前密码不对是表单错误，不是「没登录」：回 400，别让前端当成会话失效去跳登录页
+            {error, invalid_credentials} ->
+                reply_error(Req1, {invalid, current, <<"wrong current password">>});
             {error, R} -> reply_error(Req1, R)
         end
     end);

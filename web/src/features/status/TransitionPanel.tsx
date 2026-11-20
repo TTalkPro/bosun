@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { transitionTask } from '@/api/tasks';
 import { addFeedback } from '@/api/feedback';
 import { Button } from '@/components/ui/button';

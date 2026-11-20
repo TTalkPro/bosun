@@ -18,7 +18,8 @@ mcp_test_() ->
         {"links", fun links/0},
         {"session identity", fun session_identity/0},
         {"bound user & org scope", fun bound_user_scope/0},
-        {"key scopes & actor binding", fun key_scopes_and_actor/0}
+        {"key scopes & actor binding", fun key_scopes_and_actor/0},
+        {"identify cannot take another user's name", fun identify_no_impersonation/0}
     ],
     {foreach, fun setup/0, fun(_) -> ok end,
      [fun(_) -> T end || T <- Tests]}.
@@ -280,6 +281,23 @@ register_org(OrgName, Email, Name) ->
                              <<"name">> => Name, <<"password">> => <<"secret123">>}),
     {ok, P} = bosun_user:principal(Uid, #{via => api_key}),
     P.
+
+%% 署名即身份：绑定了 key 的会话不能 identify 成组织里别的用户的显示名
+identify_no_impersonation() ->
+    A = register_org(<<"Acme">>, <<"alice@acme.io">>, <<"Alice">>),
+    {ok, #{<<"id">> := BobId}} = bosun_user:create(maps:get(org_id, A), #{<<"email">> => <<"bob@acme.io">>, <<"name">> => <<"Bob">>, <<"password">> => <<"secret123">>}),
+    {ok, Bob} = bosun_user:principal(BobId, #{via => api_key}),
+    in_session(fun() ->
+        bosun_identity:bind(self(), Bob),
+        {error, E} = call(<<"identify">>, #{<<"name">> => <<"alice">>, <<"kind">> => <<"human">>}),
+        ?assertMatch(<<"invalid name: is the display name of another user", _/binary>>, E),
+        {ok, #{<<"identified">> := false}} = call(<<"whoami">>, #{}),
+        {ok, #{<<"name">> := <<"Bob">>}} = call(<<"identify">>, #{<<"name">> => <<"Bob">>, <<"kind">> => <<"human">>}),
+        {ok, #{<<"name">> := <<"acme/bob-wt">>}} = call(<<"identify">>, #{<<"name">> => <<"acme/bob-wt">>})
+    end),
+    %% 系统作用域（没绑 key）照旧
+    {ok, #{<<"name">> := <<"Alice">>}} = call(<<"identify">>, #{<<"name">> => <<"Alice">>}),
+    ok.
 
 key_scopes_and_actor() ->
     A = register_org(<<"Acme">>, <<"alice@acme.io">>, <<"Alice">>),

@@ -30,7 +30,11 @@ handle(task, <<"GET">>, Req) ->
     reply_result(200, bosun_task:get(cowboy_req:binding(id, Req)), Req);
 handle(task, <<"PATCH">>, Req) ->
     Id = cowboy_req:binding(id, Req),
-    with_body(Req, fun(Body, Req1) -> reply_result(200, bosun_task:update(Id, Body), Req1) end);
+    with_body(Req, fun(Body, Req1) ->
+        %% 署名只用于换 Epic 时级联写进 Epic 历史的那条自动记录
+        #{actor := Actor} = bosun_web_auth:actor_fields(Req1),
+        reply_result(200, bosun_task:update(Id, Body#{<<"actor">> => Actor}), Req1)
+    end);
 handle(task, _, Req) ->
     method_not_allowed(Req, <<"GET, PATCH">>);
 

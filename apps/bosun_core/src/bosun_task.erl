@@ -41,13 +41,20 @@ create(Key0, Input) when is_map(Input) ->
                                                  A -> A
                                              end,
                                   kind = Kind, epic = Epic},
+                        %% 导入的旧数据可能让 task_seq 落后于已有任务：撞号就报错，绝不覆盖
+                        mnesia:read(task, Id, write) =:= [] orelse bosun_store:abort({conflict, id}),
                         ok = mnesia:write(T),
-                        bosun_json:task_full(T, [])
+                        %% 给已完成的 Epic 加了新步骤：Epic 回到进行中
+                        Touched = bosun_task_status:sync_epics_in_tx([Epic], Actor, Now, <<"step added (auto)">>),
+                        {bosun_json:task_full(T, []), Touched}
                     end),
                     case Res of
                         {error, not_found} -> {error, {project, not_found}};
                         {error, archived} -> {error, {project, archived}};
-                        Other -> indexed(Other)
+                        {ok, {Json, Touched}} ->
+                            bosun_task_status:reindex_epics(Touched),
+                            indexed({ok, Json});
+                        {error, _} = E -> E
                     end;
                 {error, _} = E -> E
             end
@@ -98,16 +105,33 @@ list(Key0, Filter) when is_map(Filter) ->
 update(TaskId0, Input) when is_map(Input) ->
     case bosun_id:parse_task_id(TaskId0) of
         {ok, TaskId, _, _} ->
-            indexed(bosun_store:transaction(fun() ->
+            Actor = case bosun_util:get_bin(<<"actor">>, Input, <<>>) of
+                        <<>> -> case bosun_scope:actor_name() of undefined -> <<"user">>; N -> N end;
+                        A -> A
+                    end,
+            Res = bosun_store:transaction(fun() ->
                 case read_in_tx(TaskId, write) of
                     [] -> bosun_store:abort(not_found);
                     [T0] ->
                         T1 = apply_updates(T0, Input),
-                        T2 = T1#task{updated_at = bosun_util:now_ms()},
+                        Now = bosun_util:now_ms(),
+                        T2 = T1#task{updated_at = Now},
                         ok = mnesia:write(T2),
-                        bosun_json:task_full(T2, bosun_feedback:read_in_tx(TaskId))
+                        %% 换了 / 摘了 Epic：两边的 Epic 都要重新推导状态（旧的可能就此完成，新的可能被重开）
+                        Touched = case T0#task.epic =:= T2#task.epic of
+                                      true -> [];
+                                      false -> bosun_task_status:sync_epics_in_tx(
+                                                 [T0#task.epic, T2#task.epic], Actor, Now, <<"steps changed (auto)">>)
+                                  end,
+                        {bosun_json:task_full(T2, bosun_feedback:read_in_tx(TaskId)), Touched}
                 end
-            end));
+            end),
+            case Res of
+                {ok, {Json, Touched}} ->
+                    bosun_task_status:reindex_epics(Touched),
+                    indexed({ok, Json});
+                {error, _} = E -> E
+            end;
         {error, _} = E -> E
     end.
 
@@ -172,9 +196,18 @@ read_dirty(TaskId) -> visible(mnesia:dirty_read(task, TaskId)).
 %% @doc 过滤到当前作用域可见的任务（项目属于当前组织）。
 -spec visible([#task{}]) -> [#task{}].
 visible(Tasks) ->
-    case bosun_scope:org_id() of
+    case bosun_scope:get() of
         undefined -> Tasks;
-        _ -> [T || T <- Tasks, bosun_scope:project_visible(T#task.project_key)]
+        _ ->
+            %% 每个项目只查一次可见性（BQL 一次过全表，逐条查项目表太费）
+            {Kept, _} = lists:foldl(fun(#task{project_key = Key} = T, {Acc, Seen}) ->
+                {Ok, Seen1} = case Seen of
+                                  #{Key := V} -> {V, Seen};
+                                  _ -> V = bosun_scope:project_visible(Key), {V, Seen#{Key => V}}
+                              end,
+                {case Ok of true -> [T | Acc]; false -> Acc end, Seen1}
+            end, {[], #{}}, Tasks),
+            lists:reverse(Kept)
     end.
 
 %% @doc 写操作成功后把任务送进索引（异步）。
@@ -396,8 +429,9 @@ with_query(Key, Sorted, Q) ->
                  {error, _} -> []
              end,
     FromIndex = [maps:get(Id, ById) || Id <- Ranked, maps:is_key(Id, ById)],
+    RankedSet = maps:from_keys(Ranked, true),
     Substr = [T || T <- Sorted,
-                   not lists:member(T#task.id, Ranked),
+                   not maps:is_key(T#task.id, RankedSet),
                    binary:match(string:lowercase(T#task.title), Q) =/= nomatch orelse
                    binary:match(string:lowercase(T#task.id), Q) =/= nomatch],
     FromIndex ++ Substr.

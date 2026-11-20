@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { createUser, updateUser, useMe, type Role, type User } from '@/api/auth';
 import SidePanel from '@/components/SidePanel';
 import { useApiError } from '@/components/useApiError';
@@ -50,7 +50,7 @@ const UserFormPanel = ({ user, onClose }: Props) => {
       }
       onClose();
     } catch (e) {
-      const { field, message } = handleError(e);
+      const { field, message } = handleError(e, ['email', 'name', 'role', 'password']);
       if (field) setErrors({ [field]: message });
     } finally {
       setBusy(false);

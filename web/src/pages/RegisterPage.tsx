@@ -71,7 +71,8 @@ const RegisterPage = () => {
 
   const fail = (err: unknown) => {
     if (isApiError(err) && err.status === 400 && err.field) setErrors({ [err.field]: err.message });
-    else if (isApiError(err) && err.status === 409) setErrors({ email: '这个邮箱已经注册过了' });
+    // 第二步的表单里没有邮箱输入框：冲突要显示在表单级，否则看不到
+    else if (isApiError(err) && err.status === 409) setErrors(sent ? { form: '这个邮箱已经注册过了，直接登录即可' } : { email: '这个邮箱已经注册过了' });
     else if (isApiError(err) && err.status === 429) setErrors({ form: '验证码刚发过，稍等一分钟再试' });
     else setErrors({ form: err instanceof Error ? err.message : String(err) });
   };

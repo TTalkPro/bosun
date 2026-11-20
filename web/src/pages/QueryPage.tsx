@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { BookOpen, Pencil, Play, Save, Trash2 } from 'lucide-react';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { isApiError } from '@/api/client';
 import { deleteFilter, updateFilter, useFilters, useQuery } from '@/api/query';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -79,8 +79,7 @@ const QueryPage = () => {
       enqueueSnackbar(`筛选器「${current.name}」已更新`, { variant: 'success' });
       run(draft, true);
     } catch (e) {
-      const { field, message } = handleError(e);
-      if (field === 'query') enqueueSnackbar(message, { variant: 'error' });
+      handleError(e);
     }
   };
 

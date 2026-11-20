@@ -96,6 +96,8 @@ path_segments(Req) ->
     binary:split(cowboy_req:path(Req), <<"/">>, [global]).
 
 %% 只拦写接口；读接口继续靠 bosun_scope 的组织 / 项目隔离。
+%% 没列出来的**非只读方法一律要 manage**（缺省拒绝）：以前缺省放行，`POST /keys/:id' 这种
+%% 表里没有的路径被只读 key 拿来轮换别的 key。新加写接口忘了登记时，宁可拦错也不放错。
 required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"keys">>]) -> <<"manage">>;
 required_scope(<<"DELETE">>, [_, <<"api">>, <<"v1">>, <<"keys">>, _]) -> <<"manage">>;
 required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"keys">>, _, <<"rotate">>]) -> <<"manage">>;
@@ -116,7 +118,9 @@ required_scope(<<"PATCH">>,  [_, <<"api">>, <<"v1">>, <<"filters">>, _]) -> <<"m
 required_scope(<<"DELETE">>, [_, <<"api">>, <<"v1">>, <<"filters">>, _]) -> <<"manage">>;
 required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"import">>]) -> <<"manage">>;
 required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"auth">>, <<"password">>]) -> <<"manage">>;
-required_scope(_, _) -> none.
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"auth">>, <<"logout">>]) -> none;
+required_scope(Method, _) when Method =:= <<"GET">>; Method =:= <<"HEAD">>; Method =:= <<"OPTIONS">> -> none;
+required_scope(_, _) -> <<"manage">>.
 
 %% MCP 工具在会话进程里执行；把主体绑到那个进程，工具调用前从它取作用域
 bind_mcp_session(Req, P) ->

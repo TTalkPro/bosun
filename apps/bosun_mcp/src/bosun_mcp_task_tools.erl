@@ -103,7 +103,8 @@ update_task() ->
         <<"update_task">>,
         <<"Update title, description, priority, labels, assignee or epic of a task. Status is NOT changed here - use transition_task.">>,
         Schema,
-        fun(#{<<"task_id">> := Id} = Args) -> reply(bosun_task:update(Id, maps:remove(<<"task_id">>, Args)));
+        fun(#{<<"task_id">> := Id} = Args) ->
+                reply(bosun_task:update(Id, (maps:remove(<<"task_id">>, Args))#{<<"actor">> => actor(Args)}));
            (_) -> {error, <<"invalid task_id: missing">>}
         end).
 
