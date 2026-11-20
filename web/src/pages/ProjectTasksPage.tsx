@@ -1,14 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
-import { Box, Button, Chip, Collapse, IconButton, Paper, Skeleton, Stack, Tooltip, Typography } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
-import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import { ChevronDown, Plus, Settings } from 'lucide-react';
 import { useProject } from '@/api/projects';
 import { useTasks } from '@/api/tasks';
 import type { Status, TaskFilter, TaskKind } from '@/api/types';
 import { isApiError } from '@/api/client';
 import MarkdownView from '@/components/markdown/MarkdownView';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import ProjectFormDialog from '@/features/projects/ProjectFormDialog';
 import TaskFilters from '@/features/tasks/TaskFilters';
 import TaskFormDialog from '@/features/tasks/TaskFormDialog';
@@ -56,35 +58,33 @@ const ProjectTasksPage = () => {
   if (isApiError(projectError) && projectError.status === 404) return <NotFoundPage message={`项目 ${projectKey} 不存在`} />;
 
   return (
-    <Box>
-      <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ mb: 2 }} useFlexGap flexWrap="wrap">
-        <Box sx={{ minWidth: 0, flex: 1 }}>
-          {loadingProject ? <Skeleton width={240} height={40} /> : (
-            <Stack direction="row" spacing={1.5} alignItems="center">
-              <Typography variant="h4" noWrap>{project?.name}</Typography>
-              <Chip label={projectKey} sx={{ fontFamily: 'monospace', fontWeight: 700 }} />
-              {project?.archived && <Chip label="已归档" variant="outlined" />}
+    <div>
+      <div className="mb-4 flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          {loadingProject ? <Skeleton className="h-10 w-60" /> : (
+            <div className="flex items-center gap-3">
+              <h1 className="truncate text-3xl font-bold tracking-tight">{project?.name}</h1>
+              <Badge className="font-mono font-bold">{projectKey}</Badge>
+              {project?.archived && <Badge variant="outline">已归档</Badge>}
               {project?.description && (
-                <IconButton size="small" onClick={() => setDescOpen((v) => !v)} sx={{ transform: descOpen ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} aria-label="展开描述">
-                  <ExpandMoreIcon />
-                </IconButton>
+                <Button variant="ghost" size="icon" className={descOpen ? 'rotate-180 transition-transform' : 'transition-transform'} onClick={() => setDescOpen((v) => !v)} aria-label="展开描述">
+                  <ChevronDown className="size-4" />
+                </Button>
               )}
-            </Stack>
+            </div>
           )}
-        </Box>
-        <Tooltip title="项目设置"><IconButton onClick={() => setEditing(true)} disabled={!project}><SettingsOutlinedIcon /></IconButton></Tooltip>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setCreating(true)} disabled={!project || project.archived}>新建任务</Button>
-      </Stack>
+        </div>
+        <Tooltip><TooltipTrigger asChild><Button variant="outline" size="icon" onClick={() => setEditing(true)} disabled={!project} aria-label="项目设置"><Settings className="size-4" /></Button></TooltipTrigger><TooltipContent>项目设置</TooltipContent></Tooltip>
+        <Button onClick={() => setCreating(true)} disabled={!project || project.archived}><Plus />新建任务</Button>
+      </div>
 
       {project?.description && (
-        <Collapse in={descOpen}>
-          <Paper variant="outlined" sx={{ p: 2, mb: 2 }}><MarkdownView markdown={project.description} /></Paper>
-        </Collapse>
+        descOpen && <Card className="mb-4 gap-0 border p-4 py-4"><MarkdownView markdown={project.description} /></Card>
       )}
 
-      <Paper variant="outlined" sx={{ p: 1.5, mb: 2 }}>
+      <Card className="mb-4 gap-0 border p-3 py-3">
         <TaskFilters value={filter} onChange={setFilter} />
-      </Paper>
+      </Card>
 
       <TaskTable
         rows={data?.tasks ?? []}
@@ -97,7 +97,7 @@ const ProjectTasksPage = () => {
 
       {creating && <TaskFormDialog open onClose={() => setCreating(false)} projectKey={projectKey} onCreated={(t) => navigate(paths.task(t.id))} />}
       {editing && project && <ProjectFormDialog open onClose={() => setEditing(false)} project={project} />}
-    </Box>
+    </div>
   );
 };
 

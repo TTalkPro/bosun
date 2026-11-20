@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Box, Button, Chip, IconButton, Paper, Stack, Tooltip, Typography } from '@mui/material';
-import AddLinkIcon from '@mui/icons-material/AddLink';
-import CloseIcon from '@mui/icons-material/Close';
-import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
-import { useSnackbar } from 'notistack';
+import { Link2, Lock, X } from 'lucide-react';
+import { useSnackbar } from '@/components/notify';
 import { removeLink } from '@/api/tasks';
 import type { Task, TaskLink } from '@/api/types';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import StatusChip from '@/components/StatusChip';
 import { useApiError } from '@/components/useApiError';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { paths } from '@/routes/paths';
 import LinkPanel from './LinkPanel';
 import { LINK_TYPE_LABEL } from './linkTypes';
@@ -44,9 +45,10 @@ const LinksCard = ({ task, onChanged }: Props) => {
     const [from, to] = ends(removing);
     setBusy(true);
     try {
+      // removeLink 已经把两端任务的详情缓存更新 / 失效了；别再拿本地旧快照盖回去
+      // （blocked、对端状态都是服务端算的，旧快照会让「被阻塞」多挂到下一次轮询）
       await removeLink(from, to, removing.type);
       enqueueSnackbar('关联已删除', { variant: 'success' });
-      onChanged?.({ ...task, links: task.links.filter((l) => l !== removing) });
     } catch (e) {
       handleError(e);
     } finally {
@@ -56,39 +58,45 @@ const LinksCard = ({ task, onChanged }: Props) => {
   };
 
   return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
-      <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>关联 <Typography component="span" variant="caption" color="text.secondary">({task.links.length})</Typography></Typography>
-        <Box sx={{ flex: 1 }} />
-        <Button size="small" startIcon={<AddLinkIcon />} onClick={() => setAdding(true)}>添加</Button>
-      </Stack>
-      {task.links.length === 0 && <Typography variant="caption" color="text.disabled">没有关联。依赖：对方没做完不能开始；替代：对方由本任务接手。</Typography>}
-      <Stack spacing={1.25}>
+    <Card className="gap-3 p-4 py-4">
+      <div className="flex items-center">
+        <h3 className="text-base font-semibold">关联 <span className="text-xs text-muted-foreground">({task.links.length})</span></h3>
+        <div className="flex-1" />
+        <Button size="sm" onClick={() => setAdding(true)}><Link2 />添加</Button>
+      </div>
+      {task.links.length === 0 && <p className="text-xs text-muted-foreground/70">没有关联。依赖：对方没做完不能开始；替代：对方由本任务接手。</p>}
+      <div className="space-y-3">
         {GROUPS.map((g) => {
           const items = task.links.filter(g.match);
           if (!items.length) return null;
           return (
-            <Box key={g.key}>
-              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>{g.title}</Typography>
-              <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+            <div key={g.key}>
+              <p className="text-xs font-semibold text-muted-foreground">{g.title}</p>
+              <div className="mt-1.5 space-y-1.5">
                 {items.map((l) => (
-                  <Stack key={`${l.type}-${l.direction}-${l.task}`} direction="row" alignItems="center" spacing={1}
-                    sx={{ '&:hover .rm': { opacity: 1 }, minWidth: 0 }}>
-                    {unmet(l) && <Tooltip title="未完成，阻塞本任务开始"><LockOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} /></Tooltip>}
-                    <Chip size="small" variant="outlined" label={l.task} onClick={() => navigate(paths.task(l.task))}
-                      sx={{ fontFamily: '"JetBrains Mono", Menlo, monospace', fontWeight: 700 }} />
-                    <Typography variant="body2" noWrap sx={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => navigate(paths.task(l.task))}>{l.title ?? '（已不存在）'}</Typography>
+                  <div key={`${l.type}-${l.direction}-${l.task}`} className="group flex min-w-0 items-center gap-2">
+                    {unmet(l) && (
+                      <Tooltip>
+                        <TooltipTrigger asChild><Lock className="size-4 text-muted-foreground" /></TooltipTrigger>
+                        <TooltipContent>未完成，阻塞本任务开始</TooltipContent>
+                      </Tooltip>
+                    )}
+                    <Badge variant="outline" className="cursor-pointer font-mono font-bold" onClick={() => navigate(paths.task(l.task))}>{l.task}</Badge>
+                    <button type="button" className="min-w-0 flex-1 truncate text-left text-sm" onClick={() => navigate(paths.task(l.task))}>{l.title ?? '（已不存在）'}</button>
                     {l.status && <StatusChip status={l.status} />}
-                    <Tooltip title="删除关联">
-                      <IconButton className="rm" size="small" onClick={() => setRemoving(l)} sx={{ opacity: 0, transition: 'opacity .15s' }}><CloseIcon sx={{ fontSize: 16 }} /></IconButton>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button variant="ghost" size="icon" className="size-7 opacity-0 transition group-hover:opacity-100" onClick={() => setRemoving(l)} aria-label="删除关联"><X className="size-4" /></Button>
+                      </TooltipTrigger>
+                      <TooltipContent>删除关联</TooltipContent>
                     </Tooltip>
-                  </Stack>
+                  </div>
                 ))}
-              </Stack>
-            </Box>
+              </div>
+            </div>
           );
         })}
-      </Stack>
+      </div>
       {adding && <LinkPanel task={task} onClose={() => setAdding(false)} onChanged={onChanged} />}
       <ConfirmDialog
         open={!!removing}
@@ -98,7 +106,7 @@ const LinksCard = ({ task, onChanged }: Props) => {
         onClose={() => setRemoving(null)}
         onConfirm={doRemove}
       />
-    </Paper>
+    </Card>
   );
 };
 

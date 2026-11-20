@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Autocomplete, Button, Stack, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { searchTasks, type SearchHit } from '@/api/search';
 import { addLink } from '@/api/tasks';
 import type { LinkType, Task } from '@/api/types';
 import SidePanel from '@/components/SidePanel';
 import StatusChip from '@/components/StatusChip';
 import { useApiError } from '@/components/useApiError';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 import { isTaskId, normalizeId } from '@/features/tasks/status';
 import { LINK_TYPE_LABEL } from './linkTypes';
 
@@ -16,6 +18,10 @@ interface Props {
   onChanged?: (t: Task) => void;
 }
 
+const TYPES: { value: LinkType; label: string }[] = [
+  { value: 'depends_on', label: '依赖' },
+  { value: 'replaces', label: '替代' },
+];
 
 // 添加关联：类型 + 跨项目任务搜索（也可直接输 ID）
 const LinkPanel = ({ task, onClose, onChanged }: Props) => {
@@ -69,42 +75,65 @@ const LinkPanel = ({ task, onClose, onChanged }: Props) => {
       title={`添加关联 · ${task.id}`}
       onClose={onClose}
       busy={busy}
-      actions={<><Button onClick={onClose} disabled={busy}>取消</Button><Button variant="contained" onClick={submit} disabled={busy || !targetId}>添加</Button></>}
+      actions={<><Button variant="outline" onClick={onClose} disabled={busy}>取消</Button><Button onClick={submit} disabled={busy || !targetId}>添加</Button></>}
     >
-      <Stack spacing={2}>
-        <ToggleButtonGroup exclusive value={type} onChange={(_, v: LinkType | null) => { if (v) setType(v); }}
-          sx={{ '& .MuiToggleButton-root': { textTransform: 'none', px: 2 } }}>
-          <ToggleButton value="depends_on">依赖</ToggleButton>
-          <ToggleButton value="replaces">替代</ToggleButton>
-        </ToggleButtonGroup>
-        <Alert severity="info" icon={false}>
-          {type === 'depends_on'
-            ? <><b>{task.id}</b> 依赖目标任务：目标没到「已完成 / 已验收」之前，本任务不能开始（显示为被阻塞）。不允许成环。</>
-            : <><b>{task.id}</b> 替代目标任务：目标若还在「新建 / 进行中」会自动撤销，历史里记「replaced by {task.id}」。</>}
-        </Alert>
-        <Autocomplete
-          options={hits}
-          value={picked}
-          inputValue={input}
-          onInputChange={(_, v) => { setInput(v); if (picked && v !== `${picked.task.id} ${picked.task.title}`) setPicked(null); }}
-          onChange={(_, v) => setPicked(v)}
-          getOptionLabel={(h) => `${h.task.id} ${h.task.title}`}
-          isOptionEqualToValue={(a, b) => a.task.id === b.task.id}
-          filterOptions={(x) => x}
-          noOptionsText={input.trim() ? (isTaskId(input) ? `直接使用 ${normalizeId(input)}` : '没有匹配') : '输入标题关键字或任务 ID'}
-          renderOption={(props, h) => (
-            <li {...props} key={h.task.id}>
-              <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, width: '100%' }}>
-                <Typography variant="body2" sx={{ fontFamily: '"JetBrains Mono", Menlo, monospace', fontWeight: 700 }}>{h.task.id}</Typography>
-                <Typography variant="body2" noWrap sx={{ flex: 1 }}>{h.task.title}</Typography>
-                <StatusChip status={h.task.status} />
-              </Stack>
-            </li>
+      <div className="space-y-4">
+        <div className="inline-flex overflow-hidden rounded-md border">
+          {TYPES.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => setType(t.value)}
+              className={cn('px-4 py-1.5 text-sm hover:bg-accent', type === t.value && 'bg-accent font-medium')}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="rounded-md border bg-muted/40 p-3 text-sm">
+          {type === 'depends_on' ? (
+            <><b>{task.id}</b> 依赖目标任务：目标没到「已完成 / 已验收」之前，本任务不能开始（显示为被阻塞）。不允许成环。</>
+          ) : (
+            <><b>{task.id}</b> 替代目标任务：目标若还在「新建 / 进行中」会自动撤销，历史里记「replaced by {task.id}」。</>
           )}
-          renderInput={(params) => <TextField {...params} autoFocus label="目标任务" placeholder="搜索标题，或输入 KEEL-7" />}
-        />
-        {targetId && <Typography variant="caption" color="text.secondary">将建立：{task.id} → {LINK_TYPE_LABEL[type]} → {targetId}</Typography>}
-      </Stack>
+        </div>
+
+        <div>
+          <label htmlFor="link-target" className="mb-1 block text-sm font-medium">目标任务</label>
+          <Input
+            id="link-target"
+            autoFocus
+            value={input}
+            onChange={(e) => { setInput(e.target.value); if (picked && e.target.value !== `${picked.task.id} ${picked.task.title}`) setPicked(null); }}
+            placeholder="搜索标题，或输入 KEEL-7"
+          />
+          {input.trim() && !picked && (
+            <div className="mt-1 max-h-60 overflow-y-auto rounded-md border bg-popover">
+              {hits.length === 0 ? (
+                <p className="px-3 py-2 text-sm text-muted-foreground">
+                  {isTaskId(input.trim()) ? `直接使用 ${normalizeId(input)}` : input.trim() ? '没有匹配' : '输入标题关键字或任务 ID'}
+                </p>
+              ) : hits.map((h) => (
+                <button
+                  key={h.task.id}
+                  type="button"
+                  onClick={() => { setPicked(h); setInput(`${h.task.id} ${h.task.title}`); }}
+                  className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                >
+                  <span className="font-mono text-sm font-bold">{h.task.id}</span>
+                  <span className="min-w-0 flex-1 truncate">{h.task.title}</span>
+                  <StatusChip status={h.task.status} />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {targetId && (
+          <p className="text-xs text-muted-foreground">将建立：{task.id} → {LINK_TYPE_LABEL[type]} → {targetId}</p>
+        )}
+      </div>
     </SidePanel>
   );
 };

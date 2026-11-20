@@ -1,14 +1,6 @@
 import { Suspense, lazy } from 'react';
-import { Skeleton } from '@mui/material';
+import { Skeleton } from '@/components/ui/skeleton';
 import type { MarkdownEditorProps } from './CrepeEditor';
-
-// Milkdown + CodeMirror 语言包体积大，按需加载，不进首包
 const CrepeEditor = lazy(() => import('./CrepeEditor'));
-
-const MarkdownEditor = (props: MarkdownEditorProps) => (
-  <Suspense fallback={<Skeleton variant="rounded" height={props.fill ? '100%' : props.minHeight ?? 200} />}>
-    <CrepeEditor {...props} />
-  </Suspense>
-);
-
+const MarkdownEditor = (props: MarkdownEditorProps) => (<Suspense fallback={<Skeleton className={props.fill ? 'h-full w-full' : 'w-full'} style={{ height: props.minHeight ?? 200 }} />}><CrepeEditor {...props} /></Suspense>);
 export default MarkdownEditor;

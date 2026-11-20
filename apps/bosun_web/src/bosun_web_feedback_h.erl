@@ -14,8 +14,8 @@ init(Req0, State) ->
               {<<"PATCH">>, Seq} when Seq =/= undefined ->
                   FeedbackId = <<Id/binary, "#", Seq/binary>>,
                   with_body(Req0, fun(Body, Req1) ->
-                      Input = Body#{<<"actor">> => maps:get(<<"actor">>, Body, <<"user">>),
-                                    <<"actor_kind">> => maps:get(<<"actor_kind">>, Body, <<"human">>)},
+                      #{actor := Actor} = bosun_web_auth:actor_fields(Req1),
+                      Input = Body#{<<"actor">> => Actor, <<"actor_kind">> => <<"human">>},
                       %% 修订 = 新建一条，所以 201
                       reply_result(201, bosun_feedback:revise(FeedbackId, Input), Req1)
                   end);
@@ -28,8 +28,9 @@ init(Req0, State) ->
                   end;
               {<<"POST">>, _} ->
                   with_body(Req0, fun(Body, Req1) ->
-                      %% REST 来的默认是人；MCP 那边走会话身份
-                      Input = Body#{<<"author_kind">> => maps:get(<<"author_kind">>, Body, <<"human">>)},
+                      %% REST 的署名 = 登录用户的显示名；MCP 那边走会话身份
+                      #{actor := Actor} = bosun_web_auth:actor_fields(Req1),
+                      Input = Body#{<<"author">> => Actor, <<"author_kind">> => <<"human">>},
                       reply_result(201, bosun_feedback:add(Id, Input), Req1)
                   end);
               _ ->

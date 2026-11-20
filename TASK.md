@@ -15,7 +15,7 @@
 - [x] `bosun_task`（02）：`KEY-N` 事务内分配、列表 `q` 走索引、`search/2` 按任务聚合 (T)
 - [x] `bosun_task_status`（03）：含 `REJECTED`、`CANCELLED`（BOS-10） (T)
 - [x] `bosun_feedback`（04）：不可变，`revise/2` 新条 + 旧条作废 (T)
-- [x] `bosun_search`（08）：bitcask jieba BM25，fields 加权，key 前缀过滤，写后异步索引，启动重建 (T)
+- [x] `bosun_search`（08）：bitcask jieba BM25，标签 / 标题字段 boost，组织 / 项目 / 类型过滤按 meta 下推引擎（bitcask 12.0.0），索引格式带版本、不符 / 打不开自动删目录重建，写后异步索引，启动重建 (T)
 - [x] `bosun_bql` + `bosun_filter`（09） (T)
 - [x] `bosun_backup`（10） (T)
 
@@ -51,7 +51,27 @@
 - [x] BOS-12 任务关联：`replaces` / `depends_on`、blocked、BQL（设计 12）
 - [x] BOS-10 `CANCELLED`（已撤销）状态：NEW / IN_PROGRESS 可撤销、可恢复
 
+## 5.11 组织 / 用户 / 认证 / API Key（2026-09-14，BOS-15，分支 feature/org-auth，设计 13）
+- [x] BOS-16 领域层：org · user · session · api_key · email_code 表；`bosun_scope` 作用域；project / filter / actor 带 org；mailer（gen_smtp，未配置走日志）；backup 按组织 (T)
+- [x] BOS-17 REST：`bosun_web_auth` 中间件（Cookie 会话 / Bearer key / admin）；auth · org · users · keys 端点；署名 = 登录用户 (T)
+- [x] BOS-18 MCP：`/mcp` 只认 Bearer key；会话绑定 key 主人；工具 / 资源 / 提示按组织；`whoami` 带 user；`.mcp.json` 带 header (T)
+- [x] BOS-19 前端：登录 / 注册（验证码）/ 账户（API key 只显示一次）/ 组织用户管理；AuthGate；账户菜单 (T)
+- [x] BOS-20 文档：README、designs/00、AGENT-WORKFLOW、sys.config / release.env.example
+
 ## 6. 收尾
 - [x] README、设计文档 00–10
 - [x] `rebar3 check`（xref / dialyzer / eunit / ct）全部通过
 - [x] 重建后再用 Claude Code 走一遍 MCP 验收（本会话通过 `.mcp.json` 连上 bosun，BOS-3 ~ BOS-6 均由 MCP 建单 / 迁移 / 反馈）
+
+## 7. 业务审查（2026-10-28）
+- [x] [MCP API Key 权限分级](tasks/2026-10-28-mcp-key-permissions.md)：`read` / `write` / `manage` scopes、项目白名单、MCP 工具强制授权
+- [x] [MCP actor 身份收紧](tasks/2026-10-28-actor-identity-hardening.md)：绑定 API key 后禁止参数冒名
+- [x] [Epic 进度与状态规则修正](tasks/2026-10-28-epic-progress-and-state.md)：取消项不阻碍完成率，Epic 不能在子任务未完成时手动 DONE
+- [x] [Epic 子任务 Kanban](tasks/2026-10-28-epic-kanban.md)：状态列拖拽、乐观更新、blocked / open question 可视化
+- [x] [API Key 安全轮换与审计](tasks/2026-10-28-api-key-rotation.md)：保留权限配置和历史，旧秘密值立即失效
+- [x] [shadcn/Tailwind 全量迁移](tasks/2026-10-28-shadcn-migration.md)：移除 MUI compat 与 DataGrid，前端保留 React + shadcn
+
+## 8. 依赖升级与全项目审查（2026-11-19）
+- [x] [bitcask 6.7.1 → 10.0.0](tasks/2026-11-19-bitcask-10-upgrade.md)：旧索引自动重建、`search_fields_attributed` 按命中字段加权、索引打不开不拦启动
+- [x] [bitcask 10.0.0 → 12.0.0](tasks/2026-11-20-bitcask-12-upgrade.md)：去掉按命中字段加权与 merge 词典路径两处绕法；标签命中不再必然排在标题命中前面
+- [x] [审查：缺陷修复与优化](tasks/2026-11-19-audit-fixes.md)：key 轮换越权、导入跨组织写、序号回退覆盖、BQL 500、Epic 级联、前端提示全哑等；没动的建议也列在里面

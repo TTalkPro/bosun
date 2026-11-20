@@ -1,28 +1,49 @@
-import { useEffect, useState } from 'react';
-import { Chip, InputAdornment, Stack, TextField, ToggleButton, ToggleButtonGroup } from '@mui/material';
-import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
-import SearchIcon from '@mui/icons-material/Search';
-import CheckIcon from '@mui/icons-material/Check';
-import type { Status, TaskFilter, TaskKind } from '@/api/types';
-import { ALL_STATUSES, STATUS_COLOR, STATUS_LABEL } from './status';
+import { useEffect, useRef, useState } from 'react';
+import { Check, Flag, Search } from 'lucide-react';
+import type { Status, TaskFilter } from '@/api/types';
+import { ALL_STATUSES, STATUS_LABEL } from './status';
+import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 
 interface Props {
   value: TaskFilter;
   onChange: (next: TaskFilter) => void;
 }
 
+const activeChip: Record<Status, string> = {
+  NEW: 'border-sky-600 bg-sky-500/15 text-sky-700 dark:text-sky-400',
+  IN_PROGRESS: 'border-primary bg-primary/12 text-primary dark:text-primary-foreground',
+  DONE: 'border-amber-600 bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  VERIFIED: 'border-emerald-600 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+  REJECTED: 'border-destructive bg-destructive/12 text-destructive',
+  CANCELLED: 'border-muted-foreground bg-muted text-foreground',
+};
+
 // 筛选条：状态多选 chip + 一个搜索框（300ms 防抖）。
 // 搜索走后端 BM25：标题 ×3、标签 ×8 加权，正文与 Feedback 也在内，所以不再单独有标签过滤。
 const TaskFilters = ({ value, onChange }: Props) => {
   const [q, setQ] = useState(value.q ?? '');
+  // sent：自己最近一次发出去的 q；seenQ：上次渲染看到的外部 q
+  const [sent, setSent] = useState(value.q ?? '');
+  const [seenQ, setSeenQ] = useState(value.q ?? '');
+  // 防抖回调里要用**最新**的筛选值：打字后 300ms 内点了状态 chip，不能拿旧的 value 把它盖回去
+  const latest = useRef({ value, onChange });
+  useEffect(() => { latest.current = { value, onChange }; });
 
   useEffect(() => {
     const t = setTimeout(() => {
-      if ((value.q ?? '') !== q) onChange({ ...value, q: q || undefined, offset: 0 });
+      const { value: v, onChange: change } = latest.current;
+      if ((v.q ?? '') !== q) { setSent(q); change({ ...v, q: q || undefined, offset: 0 }); }
     }, 300);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
+
+  // 外面把 q 改了（切项目、浏览器前进后退）：搜索框跟上。自己刚发出去的那次不算，
+  // 免得回声把这 300ms 里接着打的字冲掉
+  if ((value.q ?? '') !== seenQ) {
+    setSeenQ(value.q ?? '');
+    if ((value.q ?? '') !== sent) { setQ(value.q ?? ''); setSent(value.q ?? ''); }
+  }
 
   const selected = value.status ?? [];
   const toggle = (s: Status) => {
@@ -31,30 +52,52 @@ const TaskFilters = ({ value, onChange }: Props) => {
   };
 
   return (
-    <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ md: 'center' }} useFlexGap flexWrap="wrap">
-      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+    <div className="flex flex-col items-stretch gap-3 md:flex-row md:flex-wrap md:items-center">
+      <div className="flex flex-wrap gap-1.5">
         {ALL_STATUSES.map((s) => {
           const on = selected.includes(s);
           return (
-            <Chip key={s} label={STATUS_LABEL[s]} size="small" clickable
-              icon={on ? <CheckIcon /> : undefined}
-              color={on ? STATUS_COLOR[s] : 'default'} variant={on ? 'filled' : 'outlined'}
-              sx={{ height: 26, borderRadius: 13, px: 0.25, fontWeight: on ? 700 : 500 }}
-              onClick={() => toggle(s)} />
+            <button
+              key={s}
+              type="button"
+              onClick={() => toggle(s)}
+              className={cn('inline-flex h-6.5 items-center gap-1 rounded-full border px-2 text-xs transition',
+                on ? cn(activeChip[s], 'font-bold') : 'border-border bg-background font-medium text-muted-foreground hover:bg-accent hover:text-foreground')}
+              aria-pressed={on}
+            >
+              {on && <Check className="size-3" />}
+              {STATUS_LABEL[s]}
+            </button>
           );
         })}
-      </Stack>
-      <ToggleButtonGroup size="small" exclusive value={value.kind ?? 'all'}
-        onChange={(_, v: TaskKind | 'all' | null) => { if (v) onChange({ ...value, kind: v === 'all' ? undefined : v, offset: 0 }); }}
-        sx={{ '& .MuiToggleButton-root': { py: 0.25, px: 1.25, textTransform: 'none' } }}>
-        <ToggleButton value="all">全部</ToggleButton>
-        <ToggleButton value="task">任务</ToggleButton>
-        <ToggleButton value="epic"><FlagOutlinedIcon sx={{ fontSize: 16, mr: 0.5 }} />Epic</ToggleButton>
-      </ToggleButtonGroup>
-      <TextField size="small" placeholder="搜索：标题 / 标签 / 正文 / 反馈 / ID" value={q} onChange={(e) => setQ(e.target.value)}
-        sx={{ width: { xs: '100%', md: 360 }, ml: { md: 'auto' } }}
-        InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }} />
-    </Stack>
+      </div>
+      <div className="inline-flex rounded-md border p-0.5">
+        {(['all', 'task', 'epic'] as const).map((item) => {
+          const active = (value.kind ?? 'all') === item;
+          return (
+            <button
+              key={item}
+              type="button"
+              onClick={() => onChange({ ...value, kind: item === 'all' ? undefined : item, offset: 0 })}
+              className={cn('inline-flex h-7 items-center gap-1 rounded-sm px-2.5 text-xs font-medium',
+                active ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+            >
+              {item === 'epic' && <Flag className="size-3.5" />}
+              {item === 'all' ? '全部' : item === 'task' ? '任务' : 'Epic'}
+            </button>
+          );
+        })}
+      </div>
+      <div className="relative w-full md:ml-auto md:w-90">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          className="h-8 pl-8"
+          placeholder="搜索：标题 / 标签 / 正文 / 反馈 / ID"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+      </div>
+    </div>
   );
 };
 

@@ -11,13 +11,19 @@
 -export([init/0, reset_tables/0, transaction/1, abort/1, tables/0, next_id/1, data_dir/0]).
 
 -define(TABLES, [
-    {project,  record_info(fields, project),  []},
-    {task,     record_info(fields, task),     [project_key, epic]},
-    {feedback, record_info(fields, feedback), [task_id]},
-    {filter,   record_info(fields, filter),   []},
-    {counter,  record_info(fields, counter),  []},
-    {actor,    record_info(fields, actor),    []},
-    {link,     record_info(fields, link),     [from, to]}
+    {project,    record_info(fields, project),    [org_id]},
+    {task,       record_info(fields, task),       [project_key, epic]},
+    {feedback,   record_info(fields, feedback),   [task_id]},
+    {filter,     record_info(fields, filter),     [org_id]},
+    {counter,    record_info(fields, counter),    []},
+    {actor,      record_info(fields, actor),      [org_id]},
+    {link,       record_info(fields, link),       [from, to]},
+    %% 组织 / 用户 / 认证（13）
+    {org,        record_info(fields, org),        []},
+    {user,       record_info(fields, user),       [org_id, email]},
+    {session,    record_info(fields, session),    [user_id]},
+    {api_key,    record_info(fields, api_key),    [user_id, hash]},
+    {email_code, record_info(fields, email_code), []}
 ]).
 
 %% @doc 应用启动时调用：确保磁盘 schema 与各 disc_copies 表存在并已迁移。

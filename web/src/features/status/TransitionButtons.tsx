@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { Button, Stack, Tooltip } from '@mui/material';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { transitionTask } from '@/api/tasks';
 import type { Status, Task } from '@/api/types';
 import { useApiError } from '@/components/useApiError';
+import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { STATUS_LABEL, isForward, nextStatuses, transitionLabel } from '@/features/tasks/status';
 import TransitionPanel from './TransitionPanel';
 import CompletePanel from './CompletePanel';
+import { cn } from '@/lib/utils';
 
 interface Props {
   task: Task;
@@ -37,21 +39,32 @@ const TransitionButtons = ({ task, onChanged }: Props) => {
   const from = task.status;
   return (
     <>
-      <Stack direction="row" spacing={1}>
+      <div className="flex flex-wrap gap-2">
         {nextStatuses(from).map((to) => {
           const forward = isForward(from, to);
+          const destructive = to === 'REJECTED';
           const blockedStart = to === 'IN_PROGRESS' && from === 'NEW' && task.blocked;
           const blockers = task.links.filter((l) => l.type === 'depends_on' && l.direction === 'out' && l.status !== 'DONE' && l.status !== 'VERIFIED').map((l) => l.task);
           const button = (
-            <Button key={to} size="small" disabled={busy || blockedStart} variant={forward ? 'contained' : 'outlined'}
-              color={forward ? 'primary' : to === 'REJECTED' ? 'error' : 'inherit'}
-              onClick={() => (!forward ? setTarget(to) : to === 'IN_PROGRESS' ? run(to) : setComplete(to as 'DONE' | 'VERIFIED'))}>
+            <Button
+              key={to}
+              size="sm"
+              disabled={busy || blockedStart}
+              className={cn(forward ? '' : 'bg-transparent text-foreground shadow-none hover:bg-accent', destructive && 'border border-destructive/30 bg-transparent text-destructive shadow-none hover:bg-destructive/10 hover:text-destructive')}
+              variant={forward ? 'default' : 'outline'}
+              onClick={() => (!forward ? setTarget(to) : to === 'IN_PROGRESS' ? run(to) : setComplete(to as 'DONE' | 'VERIFIED'))}
+            >
               {transitionLabel(from, to)}
             </Button>
           );
-          return blockedStart ? <Tooltip key={to} title={`被阻塞：先完成 ${blockers.join('、')}`}><span>{button}</span></Tooltip> : button;
+          return blockedStart ? (
+            <Tooltip key={to}>
+              <TooltipTrigger asChild><span>{button}</span></TooltipTrigger>
+              <TooltipContent>被阻塞：先完成 {blockers.join('、')}</TooltipContent>
+            </Tooltip>
+          ) : button;
         })}
-      </Stack>
+      </div>
       {target && <TransitionPanel task={task} to={target} onClose={() => setTarget(null)} onChanged={onChanged} />}
       {complete && <CompletePanel task={task} to={complete} onClose={() => setComplete(null)} onChanged={onChanged} />}
     </>

@@ -1,28 +1,19 @@
 import type { ReactNode } from 'react';
-import { Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle } from '@mui/material';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
 
-interface Props {
-  open: boolean;
-  title: string;
-  message: ReactNode;
-  confirmText?: string;
-  /** 危险操作：确认按钮红色 */
-  danger?: boolean;
-  busy?: boolean;
-  onConfirm: () => void;
-  onClose: () => void;
-}
+interface Props { open: boolean; title: string; message: ReactNode; confirmText?: string; danger?: boolean; busy?: boolean; onConfirm: () => void; onClose: () => void; }
 
-// 纯确认（无输入）用它，替代原生 window.confirm；带输入的一律走 SidePanel
-const ConfirmDialog = ({ open, title, message, confirmText = '确定', danger = false, busy = false, onConfirm, onClose }: Props) => (
-  <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="xs">
-    <DialogTitle>{title}</DialogTitle>
-    <DialogContent><DialogContentText component="div">{message}</DialogContentText></DialogContent>
-    <DialogActions>
-      <Button onClick={onClose} disabled={busy}>取消</Button>
-      <Button variant="contained" color={danger ? 'error' : 'primary'} onClick={onConfirm} disabled={busy} autoFocus>{confirmText}</Button>
-    </DialogActions>
+const ConfirmDialog = ({ open, title, message, confirmText = '确定', danger, busy, onConfirm, onClose }: Props) => (
+  <Dialog open={open} onOpenChange={(next) => !busy && !next && onClose()}>
+    <DialogContent className="sm:max-w-sm">
+      <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription asChild><div>{message}</div></DialogDescription></DialogHeader>
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose} disabled={busy}>取消</Button>
+        <Button onClick={onConfirm} disabled={busy} autoFocus className={cn(danger && 'bg-destructive text-white hover:bg-destructive/90')}>{confirmText}</Button>
+      </DialogFooter>
+    </DialogContent>
   </Dialog>
 );
-
 export default ConfirmDialog;

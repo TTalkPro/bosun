@@ -7,7 +7,8 @@ bql_test_() ->
         fun(_) -> {"parse", fun parse/0} end,
         fun(_) -> {"parse errors", fun parse_errors/0} end,
         fun(_) -> {"query", fun query/0} end,
-        fun(_) -> {"saved filters", fun saved_filters/0} end
+        fun(_) -> {"saved filters", fun saved_filters/0} end,
+        fun(_) -> {"no 500 on odd queries", fun robustness/0} end
     ]}.
 
 parse() ->
@@ -104,6 +105,38 @@ query() ->
     ?assertEqual([<<"BQ-3">>], Ids(<<"status = cancelled">>)),
     ?assertMatch({error, {invalid, query, _}}, bosun_bql:query(<<"blocked = maybe">>, #{})),
     ?assertMatch({error, {invalid, query, _}}, bosun_bql:query(<<"depends_on ~ x">>, #{})).
+
+%% 这些以前都是崩（REST 上是 500）
+robustness() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"RB">>, <<"name">> => <<"r">>}),
+    {ok, _} = bosun_task:create(<<"RB">>, #{<<"title">> => <<"hi">>, <<"priority">> => <<"high">>}),
+    {ok, _} = bosun_task:create(<<"RB">>, #{<<"title">> => <<"mid">>}),
+    {ok, _} = bosun_task:create(<<"RB">>, #{<<"title">> => <<"lo">>, <<"priority">> => <<"low">>}),
+    Ids = fun(Q) -> {ok, #{<<"tasks">> := Ts}} = bosun_bql:query(Q, #{}), lists:sort([maps:get(<<"id">>, T) || T <- Ts]) end,
+    %% priority IN / NOT IN
+    ?assertEqual([<<"RB-1">>, <<"RB-3">>], Ids(<<"priority in (high, low)">>)),
+    ?assertEqual([<<"RB-2">>], Ids(<<"priority not in (high, low)">>)),
+    %% IS EMPTY 只对可空字段；别的解析时就拒绝（库里有没有任务都一样）
+    ?assertMatch({error, {invalid, query, <<"IS EMPTY not supported for status">>}}, bosun_bql:query(<<"status is empty">>, #{})),
+    ?assertMatch({error, {invalid, query, _}}, bosun_bql:parse(<<"text is not empty">>)),
+    ?assertMatch({error, {invalid, query, _}}, bosun_filter:create(#{<<"name">> => <<"bad">>, <<"query">> => <<"title is empty">>})),
+    ?assertEqual([<<"RB-1">>, <<"RB-2">>, <<"RB-3">>], Ids(<<"assignee is empty and epic is empty and description is empty">>)),
+    %% 不存在的日期、非法 UTF-8
+    ?assertMatch({error, {invalid, query, <<"invalid date", _/binary>>}}, bosun_bql:query(<<"created > 2026-13-45">>, #{})),
+    ?assertMatch({error, {invalid, query, <<"invalid date", _/binary>>}}, bosun_bql:query(<<"created > 2026-02-30T25:00">>, #{})),
+    ?assertMatch({error, {invalid, query, _}}, bosun_bql:query(<<"title ~ ", 255, 254>>, #{})),
+    ?assertEqual([<<"RB-1">>, <<"RB-2">>, <<"RB-3">>], Ids(<<"created > 2026-01-01T10:30">>)),
+    %% feedback_count 数的是有效条数（被修订作废的旧版本不算），和任务摘要里的同口径
+    {ok, _} = bosun_feedback:add(<<"RB-1">>, #{<<"content">> => <<"v1">>, <<"author">> => <<"k">>}),
+    {ok, _} = bosun_feedback:revise(<<"RB-1#1">>, #{<<"content">> => <<"v2">>, <<"actor">> => <<"k">>}),
+    {ok, _} = bosun_feedback:add(<<"RB-2">>, #{<<"content">> => <<"a">>, <<"author">> => <<"k">>}),
+    {ok, _} = bosun_feedback:add(<<"RB-2">>, #{<<"content">> => <<"b">>, <<"author">> => <<"k">>}),
+    {ok, #{<<"feedback_count">> := 1}} = bosun_task:get(<<"RB-1">>),
+    ?assertEqual([<<"RB-1">>], Ids(<<"feedback_count = 1">>)),
+    ?assertEqual([<<"RB-2">>], Ids(<<"feedback_count >= 2">>)),
+    ?assertEqual([<<"RB-3">>], Ids(<<"feedback_count = 0">>)),
+    {ok, #{<<"tasks">> := [#{<<"id">> := <<"RB-2">>}, #{<<"id">> := <<"RB-1">>}, #{<<"id">> := <<"RB-3">>}]}} =
+        bosun_bql:query(<<"project = RB order by feedback_count desc">>, #{}).
 
 saved_filters() ->
     {ok, _} = bosun_project:create(#{<<"key">> => <<"SF">>, <<"name">> => <<"s">>}),

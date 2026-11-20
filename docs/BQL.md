@@ -59,7 +59,7 @@ op     := = | != | ~ | !~ | > | >= | < | <=
 | `feedback` | `~ !~ IS EMPTY` | BM25 只搜反馈正文；`IS EMPTY` = 没有反馈 |
 | `created` `updated` | `> >= < <=` | 日期，见下 |
 | `question`（`open_question`） | `= !=` | `true` = 最新一条有效反馈是未回答的 `question` |
-| `feedback_count` | `= != > >= < <=` | 反馈条数（含被修订作废的旧版本） |
+| `feedback_count` | `= != > >= < <=` | 有效反馈条数（被修订作废的旧版本不算），与任务列表 / 详情里显示的 `feedback_count` 同口径 |
 
 字段写错或运算符组合不支持，解析期直接报错（见「错误」）。
 

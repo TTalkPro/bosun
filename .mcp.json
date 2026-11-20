@@ -1,5 +1,9 @@
 {
   "mcpServers": {
-    "bosun": { "type": "http", "url": "http://127.0.0.1:4000/mcp" }
+    "bosun": {
+      "type": "http",
+      "url": "http://127.0.0.1:4000/mcp",
+      "headers": { "Authorization": "Bearer ${BOSUN_API_KEY}" }
+    }
   }
 }

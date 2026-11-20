@@ -1,22 +1,21 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { RouterProvider } from 'react-router';
-import { ThemeProvider, CssBaseline, InitColorSchemeScript } from '@mui/material';
-import { SnackbarProvider } from 'notistack';
 import { SWRConfig } from 'swr';
-import theme from './theme';
+import { Toaster } from '@/components/ui/sonner';
+import './styles/index.css';
 import router from './routes/router';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <InitColorSchemeScript attribute="data-mui-color-scheme" />
-    <ThemeProvider theme={theme} defaultMode="system">
-      <CssBaseline />
+// 主题在 hooks/use-theme 模块加载时就应用到 <html> 上（Toaster 引用了它），这里不用再调
+const App = () => {
+  return (
+    <React.StrictMode>
       <SWRConfig value={{ revalidateOnFocus: true, shouldRetryOnError: false }}>
-        <SnackbarProvider maxSnack={3} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
-          <RouterProvider router={router} />
-        </SnackbarProvider>
+        <RouterProvider router={router} />
+        <Toaster position="bottom-right" richColors closeButton />
       </SWRConfig>
-    </ThemeProvider>
-  </React.StrictMode>,
-);
+    </React.StrictMode>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')!).render(<App />);

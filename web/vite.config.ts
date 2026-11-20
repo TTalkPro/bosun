@@ -1,11 +1,13 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import path from 'node:path';
 
 // 开发：/api 与 /mcp 代理到 Erlang 后端；构建：产物直接落到后端静态目录
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+  react(), tailwindcss()],
   resolve: {
     alias: { '@': path.resolve(__dirname, 'src') },
   },

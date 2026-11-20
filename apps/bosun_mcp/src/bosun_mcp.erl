@@ -4,6 +4,8 @@
 %%%-------------------------------------------------------------------
 -module(bosun_mcp).
 
+-include_lib("beamai_mcp/include/beamai_mcp.hrl").
+
 -export([tools/0, resources/0, prompts/0, server_info/0, cowboy_config/0]).
 -export([reply/1, error_to_text/1, actor/1, actor_kind/1, obj/1, str/1, arr/1, enum/2, bool/1, int/1, nested/2]).
 
@@ -13,14 +15,98 @@
 
 -spec tools() -> [tuple()].
 tools() ->
-    bosun_mcp_identity_tools:tools()
-    ++ bosun_mcp_project_tools:tools()
-    ++ bosun_mcp_task_tools:tools()
-    ++ bosun_mcp_feedback_tools:tools()
-    ++ bosun_mcp_query_tools:tools().
+    [scoped(T) || T <- bosun_mcp_identity_tools:tools()
+                       ++ bosun_mcp_project_tools:tools()
+                       ++ bosun_mcp_task_tools:tools()
+                       ++ bosun_mcp_feedback_tools:tools()
+                       ++ bosun_mcp_query_tools:tools()].
+
+%% 工具 / 资源 / 提示都在会话进程里执行：调用前把该会话绑定的主体（API key 的主人）设成
+%% 数据作用域，并检查 key 的 scopes。系统作用域（纯领域测试 / shell）保持原行为。
+scoped(#mcp_tool{handler = Handler} = Tool) ->
+    Name = Tool#mcp_tool.name,
+    Tool#mcp_tool{handler = fun(Args) ->
+        P = bosun_identity:principal(),
+        bosun_scope:set(P),
+        case {authorize_tool(Name, P), actor_override(Name, Args, P)} of
+            {ok, ok} -> Handler(Args);
+            {Error, _} when Error =/= ok -> Error;
+            {_, Error} when Error =/= ok -> Error
+        end
+    end};
+scoped(#mcp_resource{handler = Handler} = Res) ->
+    Res#mcp_resource{handler = fun() ->
+        P = bosun_identity:principal(),
+        bosun_scope:set(P),
+        case authorize_tool(<<"resource">>, P) of
+            ok -> Handler();
+            Error -> Error
+        end
+    end};
+scoped(#mcp_prompt{handler = Handler} = Prompt) ->
+    Prompt#mcp_prompt{handler = fun(Args) ->
+        P = bosun_identity:principal(),
+        bosun_scope:set(P),
+        case authorize_tool(<<"resource">>, P) of
+            ok -> Handler(Args);
+            Error -> Error
+        end
+    end}.
+
+%% Key scope 模型：read 是所有可见性入口，write 覆盖任务协作，manage 覆盖项目与 filter。
+authorize_tool(_Name, undefined) -> ok;
+authorize_tool(Name, P) ->
+    Scope = case Name of
+        <<"identify">> -> none;
+        <<"whoami">> -> none;
+        <<"list_actors">> -> <<"read">>;
+        <<"list_projects">> -> <<"read">>;
+        <<"get_project">> -> <<"read">>;
+        <<"create_project">> -> <<"manage">>;
+        <<"update_project">> -> <<"manage">>;
+        <<"list_tasks">> -> <<"read">>;
+        <<"search_tasks">> -> <<"read">>;
+        <<"get_task">> -> <<"read">>;
+        <<"create_task">> -> <<"write">>;
+        <<"update_task">> -> <<"write">>;
+        <<"transition_task">> -> <<"write">>;
+        <<"link_tasks">> -> <<"write">>;
+        <<"unlink_tasks">> -> <<"write">>;
+        <<"add_feedback">> -> <<"write">>;
+        <<"update_feedback">> -> <<"write">>;
+        <<"list_feedback">> -> <<"read">>;
+        <<"query_tasks">> -> <<"read">>;
+        <<"list_filters">> -> <<"read">>;
+        <<"save_filter">> -> <<"manage">>;
+        <<"delete_filter">> -> <<"manage">>;
+        _ -> <<"read">>
+    end,
+    case Scope =:= none orelse principal_has_scope(Scope, P) of
+        true -> ok;
+        false -> {error, error_to_text({forbidden_scope, Scope})}
+    end.
+
+principal_has_scope(_Scope, #{scopes := undefined}) -> true;
+principal_has_scope(Scope, #{scopes := Scopes}) when is_list(Scopes) ->
+    lists:member(<<"*">>, Scopes) orelse lists:member(Scope, Scopes).
+
+%% 已绑定 API key 的会话不能再用 actor / author 冒名；系统作用域保留脚本兼容。
+actor_override(Name, Args, undefined) ->
+    _ = Name,
+    _ = Args,
+    ok;
+actor_override(<<"identify">>, _Args, _P) -> ok;
+actor_override(_Name, Args, _P) ->
+    case maps:is_key(<<"actor">>, Args) orelse maps:is_key(<<"author">>, Args) of
+        true -> {error, error_to_text(forbidden_actor_override)};
+        false -> ok
+    end.
 
 -spec resources() -> [tuple()].
 resources() ->
+    [scoped(R) || R <- resources0()].
+
+resources0() ->
     [beamai_mcp_types:make_resource(
          <<"bosun://projects">>, <<"projects">>, undefined,
          <<"All active (non-archived) projects as JSON">>, <<"application/json">>,
@@ -39,6 +125,9 @@ resources() ->
 
 -spec prompts() -> [tuple()].
 prompts() ->
+    [scoped(P) || P <- prompts0()].
+
+prompts0() ->
     [beamai_mcp_types:make_prompt(
          <<"work_on_task">>,
          <<"Load a task's full context and the workflow instructions to start working on it">>,
@@ -118,6 +207,11 @@ error_to_text({conflict, key}) ->
     <<"project key already exists; pick another key or use get_project">>;
 error_to_text({invalid, Field, Why}) ->
     <<"invalid ", (bosun_util:to_binary(Field))/binary, ": ", (bosun_util:to_binary(Why))/binary>>;
+error_to_text({forbidden_scope, Scope}) ->
+    <<"forbidden_scope: this API key lacks the ", Scope/binary,
+      " scope; create another key with the required permission">>;
+error_to_text(forbidden_actor_override) ->
+    <<"forbidden_actor_override: this API key cannot pass actor or author; call identify once and omit those arguments">>;
 error_to_text({invalid_transition, From, To}) ->
     Allowed = [bosun_task_status:to_binary(S) || S <- bosun_task_status:next_statuses(From)],
     AllowedTxt = case Allowed of
@@ -127,6 +221,9 @@ error_to_text({invalid_transition, From, To}) ->
     <<"cannot move task from ", (bosun_task_status:to_binary(From))/binary,
       " to ", (bosun_task_status:to_binary(To))/binary,
       "; allowed next statuses: ", AllowedTxt/binary>>;
+error_to_text(epic_children_incomplete) ->
+    <<"epic_children_incomplete: all active steps must be DONE or VERIFIED before the epic can be completed; "
+      "cancelled steps are excluded">>;
 error_to_text(Other) ->
     iolist_to_binary(io_lib:format("~p", [Other])).
 

@@ -5,7 +5,10 @@
 
 -export([init/2]).
 
--import(bosun_web_api, [reply_result/3, with_body/2, query_map/1, method_not_allowed/2]).
+-import(bosun_web_api, [reply_result/3, with_body/3, query_map/1, method_not_allowed/2]).
+
+%% 整库 JSON 可能很大
+-define(MAX_IMPORT, 256 * 1024 * 1024).
 
 init(Req0, #{mode := export} = State) ->
     Req = case cowboy_req:method(Req0) of
@@ -25,7 +28,7 @@ init(Req0, #{mode := import} = State) ->
                              <<"replace">> -> replace;
                              _ -> merge
                          end,
-                  with_body(Req0, fun(Body, Req1) -> reply_result(200, bosun_backup:import(Body, #{mode => Mode}), Req1) end);
+                  with_body(Req0, ?MAX_IMPORT, fun(Body, Req1) -> reply_result(200, bosun_backup:import(Body, #{mode => Mode}), Req1) end);
               _ -> method_not_allowed(Req0, <<"POST">>)
           end,
     {ok, Req, State}.

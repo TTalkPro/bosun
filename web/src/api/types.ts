@@ -24,6 +24,12 @@ export interface EpicProgress {
   total: number;
   /** 已验收数 */
   done: number;
+  /** 已撤销数；完成率的分母不含它 */
+  cancelled: number;
+  /** total - cancelled；全部撤销时完成率按 100% */
+  active_total: number;
+  /** 0-100，分母排除 CANCELLED */
+  percent: number;
   by_status: Partial<Record<Status, number>>;
 }
 

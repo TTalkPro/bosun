@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { Box, Button, Stack, TextField, Typography } from '@mui/material';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { transitionTask } from '@/api/tasks';
 import { addFeedback } from '@/api/feedback';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import type { Status, Task } from '@/api/types';
 import MarkdownEditor from '@/components/markdown/MarkdownEditor';
 import SidePanel from '@/components/SidePanel';
@@ -52,22 +54,24 @@ const TransitionPanel = ({ task, to, onClose, onChanged }: Props) => {
       busy={busy}
       actions={
         <>
-          <Button onClick={onClose} disabled={busy}>取消</Button>
-          <Button variant="contained" color={danger ? 'error' : cancel ? 'inherit' : 'warning'} onClick={submit} disabled={busy}>{label}</Button>
+          <Button variant="outline" onClick={onClose} disabled={busy}>取消</Button>
+          <Button variant={danger ? 'destructive' : cancel ? 'secondary' : 'default'} onClick={submit} disabled={busy}>{label}</Button>
         </>
       }
     >
-      <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>
+      <p className="mb-2 text-xs text-muted-foreground">
         {to === 'CANCELLED' ? '为什么不做了（存为说明 Feedback；过时 / 被别的工单覆盖 / 不再需要）'
           : task.status === 'CANCELLED' ? '为什么又需要了（存为说明 Feedback）'
           : to === 'NEW' ? '说明改了什么（存为评审 Feedback，对方会看到）' : '原因（存为评审 Feedback，对方会看到）'}
-      </Typography>
-      <Box sx={{ flex: 1, minHeight: 0 }}>
+      </p>
+      <div className="min-h-0 flex-1">
         <MarkdownEditor value="" onChange={setReview} minHeight={200} fill autoFocus placeholder={cancel ? (to === 'CANCELLED' ? '过时了？被哪个工单覆盖了？…' : '为什么又需要了…') : '哪里不对、期望是什么…'} />
-      </Box>
-      <Stack sx={{ mt: 2 }}>
-        <TextField label="历史备注（可选）" value={comment} onChange={(e) => setComment(e.target.value)} helperText="留空则自动引用上面的 Feedback ID" />
-      </Stack>
+      </div>
+      <div className="mt-4 space-y-2">
+        <Label htmlFor="transition-comment">历史备注（可选）</Label>
+        <Input id="transition-comment" value={comment} onChange={(e) => setComment(e.target.value)} />
+        <p className="text-xs text-muted-foreground">留空则自动引用上面的 Feedback ID</p>
+      </div>
     </SidePanel>
   );
 };

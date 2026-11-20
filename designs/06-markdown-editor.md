@@ -9,7 +9,7 @@
 
 ## 2. 样式
 
-`markdownStyles.ts` 用 MUI palette 重写 GitHub `.markdown-body` 排版规则，编辑器与展示共用；highlight.js token 配色用 CSS 变量按明暗模式切换。Crepe 的 CodeMirror 缺省主题是固定深色 oneDark，改为 `cmTheme.ts`（同一组 CSS 变量）。
+`markdownStyles.ts` 用 Tailwind / CSS variables 重写 GitHub `.markdown-body` 排版规则，编辑器与展示共用；highlight.js token 配色用 CSS 变量按明暗模式切换。Crepe 的 CodeMirror 缺省主题是固定深色 oneDark，改为 `cmTheme.ts`（同一组 CSS 变量）。
 
 ## 3. Mermaid
 

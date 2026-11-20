@@ -1,11 +1,14 @@
 import { useState } from 'react';
-import { Box, Button, FormControlLabel, Stack, Switch, TextField, Typography } from '@mui/material';
-import { useSnackbar } from 'notistack';
+import { useSnackbar } from '@/components/notify';
 import { createProject, updateProject } from '@/api/projects';
 import type { Project } from '@/api/types';
 import MarkdownEditor from '@/components/markdown/MarkdownEditor';
 import SidePanel from '@/components/SidePanel';
 import { useApiError } from '@/components/useApiError';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 
 const KEY_RE = /^[A-Z][A-Z0-9]{1,9}$/;
 
@@ -45,9 +48,8 @@ const ProjectFormDialog = ({ open, onClose, project, onSaved }: Props) => {
       onSaved?.(saved);
       onClose();
     } catch (e) {
-      const { field, message } = handleError(e);
-      if (field === 'key' || field === 'name') setErrors({ [field]: message });
-      else if (field) enqueueSnackbar(message, { variant: 'error' });
+      const { field, message } = handleError(e, ['key', 'name']);
+      if (field) setErrors({ [field]: message });
     } finally {
       setBusy(false);
     }
@@ -62,33 +64,52 @@ const ProjectFormDialog = ({ open, onClose, project, onSaved }: Props) => {
       busy={busy}
       actions={
         <>
-          <Button onClick={onClose} disabled={busy}>取消</Button>
-          <Button variant="contained" onClick={submit} disabled={busy}>{editing ? '保存' : '创建'}</Button>
+          <Button variant="outline" onClick={onClose} disabled={busy}>取消</Button>
+          <Button onClick={submit} disabled={busy}>{editing ? '保存' : '创建'}</Button>
         </>
       }
     >
-      <Stack spacing={2} sx={{ flex: 1, minHeight: 0 }}>
-        <TextField
-          label="Key"
-          value={key}
-          onChange={(e) => setKey(e.target.value.toUpperCase())}
-          disabled={editing}
-          error={!!keyError}
-          helperText={keyError ?? '任务 ID 前缀，如 BOS → BOS-1；创建后不可修改'}
-          inputProps={{ maxLength: 10, style: { fontFamily: 'monospace', fontWeight: 700 } }}
-          autoFocus={!editing}
-        />
-        <TextField label="名称" value={name} onChange={(e) => setName(e.target.value)} error={!!errors.name} helperText={errors.name} autoFocus={editing} />
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
+        <div>
+          <Label htmlFor="project-key">Key</Label>
+          <Input
+            id="project-key"
+            value={key}
+            onChange={(e) => setKey(e.target.value.toUpperCase())}
+            disabled={editing}
+            aria-invalid={!!keyError}
+            maxLength={10}
+            className="font-mono font-bold"
+            autoFocus={!editing}
+          />
+          <p className={keyError ? 'mt-1 text-xs text-destructive' : 'mt-1 text-xs text-muted-foreground'}>
+            {keyError ?? '任务 ID 前缀，如 BOS → BOS-1；创建后不可修改'}
+          </p>
+        </div>
+        <div>
+          <Label htmlFor="project-name">名称</Label>
+          <Input
+            id="project-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-invalid={!!errors.name}
+            autoFocus={editing}
+          />
+          {errors.name && <p className="mt-1 text-xs text-destructive">{errors.name}</p>}
+        </div>
         {editing && (
-          <FormControlLabel control={<Switch checked={archived} onChange={(e) => setArchived(e.target.checked)} />} label="归档（不再接受新任务，已有任务仍可操作）" />
+          <div className="flex items-center gap-2">
+            <Switch id="project-archived" checked={archived} onCheckedChange={setArchived} />
+            <Label htmlFor="project-archived">归档（不再接受新任务，已有任务仍可操作）</Label>
+          </div>
         )}
-        <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>描述（Markdown）</Typography>
-          <Box sx={{ flex: 1, minHeight: 0 }}>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <p className="mb-1 text-xs text-muted-foreground">描述（Markdown）</p>
+          <div className="min-h-0 flex-1">
             <MarkdownEditor value={description} onChange={setDescription} minHeight={200} fill placeholder="这个项目是做什么的…" />
-          </Box>
-        </Box>
-      </Stack>
+          </div>
+        </div>
+      </div>
     </SidePanel>
   );
 };

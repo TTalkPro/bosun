@@ -19,7 +19,9 @@ One project may have several worktrees and several agents running at once, so id
 
 ## 2. Identity
 
-Call once at the start of a session:
+First you need an API key: create one on the Bosun "Account & API keys" page and connect to `/mcp` with `Authorization: Bearer <key>` (in Claude Code's `.mcp.json`: `"headers": {"Authorization": "Bearer ${BOSUN_API_KEY}"}`). The key decides which organization you belong to and which projects you can see; without one every request is 401.
+
+Then call once at the start of a session:
 
 ```
 identify(name="keel/feature-search", kind="agent", project="KEEL", worktree="/home/x/keel-search")
@@ -27,7 +29,7 @@ identify(name="keel/feature-search", kind="agent", project="KEEL", worktree="/ho
 
 - `name` convention: `<project key>/<worktree or purpose>`. Different worktrees of the same project must use different names.
 - Every later write (create, transition, feedback) is recorded under that name. Without `identify` you get an auto name like `agent-1a2b3c`, which nobody can read.
-- Humans set their name in the top-right of the web UI; it lands in the same actor table. `list_actors` / `GET /api/v1/actors` lists every identity seen and its kind.
+- A human's signature in the web UI is the account's display name (assigned by the org admin). `list_actors` / `GET /api/v1/actors` lists every identity seen in your organization, its kind and owning user; `whoami` returns `user`, the owner of this key.
 - `actor` / `author` on a single call overrides the session identity; normally unnecessary.
 
 ## 3. Statuses and transitions

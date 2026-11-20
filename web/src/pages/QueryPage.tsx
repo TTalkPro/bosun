@@ -1,21 +1,19 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import {
-  Alert, Box, Button, Chip, Collapse, IconButton,
-  InputAdornment, Paper, Stack, TextField, Tooltip, Typography,
-} from '@mui/material';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
-import { useSnackbar } from 'notistack';
+import { BookOpen, Pencil, Play, Save, Trash2 } from 'lucide-react';
+import { useSnackbar } from '@/components/notify';
 import { isApiError } from '@/api/client';
 import { deleteFilter, updateFilter, useFilters, useQuery } from '@/api/query';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import FilterFormPanel from '@/features/filters/FilterFormPanel';
 import TaskTable from '@/features/tasks/TaskTable';
 import { useApiError } from '@/components/useApiError';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { paths } from '@/routes/paths';
 
 const PAGE_SIZE = 25;
@@ -30,16 +28,14 @@ const EXAMPLES = [
 ];
 
 const CheatSheet = () => (
-  <Box sx={{ fontSize: 13, '& code': { fontFamily: '"JetBrains Mono", Menlo, monospace', bgcolor: 'action.hover', px: 0.5, borderRadius: 0.5 } }}>
-    <Typography variant="subtitle2" sx={{ mb: 0.5 }}>BQL 速查</Typography>
-    <Stack spacing={0.5}>
+  <div className="space-y-2 text-[13px] [&_code]:rounded-sm [&_code]:bg-accent [&_code]:px-1 [&_code]:font-mono">
+    <h3 className="text-sm font-semibold">BQL 速查</h3>
       <div><b>字段</b>：<code>project</code> <code>id</code> <code>status</code> <code>priority</code> <code>labels</code> <code>reporter</code>(created_by) <code>title</code> <code>description</code> <code>text</code>(全文) <code>feedback</code>(只搜反馈) <code>created</code> <code>updated</code> <code>question</code> <code>feedback_count</code></div>
       <div><b>运算</b>：<code>=</code> <code>!=</code> <code>~</code>(包含 / 全文) <code>!~</code> <code>&gt; &gt;= &lt; &lt;=</code> <code>IN (a, b)</code> <code>NOT IN</code> <code>IS EMPTY</code> <code>IS NOT EMPTY</code> · <code>AND</code> <code>OR</code> <code>NOT</code> 括号 · <code>ORDER BY 字段 [ASC|DESC], ...</code></div>
       <div><b>日期</b>：<code>2026-09-01</code> <code>2026-09-01T10:00</code> <code>now</code> <code>-7d</code> <code>-2w</code> <code>-12h</code></div>
       <div><b>状态</b>：NEW · IN_PROGRESS · DONE · VERIFIED · REJECTED · CANCELLED；<b>优先级</b>：low · medium · high（可比较大小）</div>
       <div>值可以裸写或加双引号；关键字与字段名不分大小写；有 <code>text ~</code> 且没写 ORDER BY 时按相关度排序，否则按更新时间倒序。</div>
-    </Stack>
-  </Box>
+  </div>
 );
 
 const QueryPage = () => {
@@ -83,8 +79,7 @@ const QueryPage = () => {
       enqueueSnackbar(`筛选器「${current.name}」已更新`, { variant: 'success' });
       run(draft, true);
     } catch (e) {
-      const { field, message } = handleError(e);
-      if (field === 'query') enqueueSnackbar(message, { variant: 'error' });
+      handleError(e);
     }
   };
 
@@ -101,51 +96,48 @@ const QueryPage = () => {
   const queryError = isApiError(error) && error.status === 400 ? error.message : null;
 
   return (
-    <Box>
-      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }} useFlexGap flexWrap="wrap">
-        <Typography variant="h4">{current ? current.name : '查询'}</Typography>
+    <div>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <h1 className="text-3xl font-bold tracking-tight">{current ? current.name : '查询'}</h1>
         {current && (
-          <Stack direction="row" spacing={0.5}>
-            <Tooltip title="编辑筛选器（名称 / 查询）"><IconButton size="small" onClick={() => setPanel('edit')}><EditOutlinedIcon fontSize="small" /></IconButton></Tooltip>
-            <Tooltip title="删除筛选器"><IconButton size="small" onClick={() => setConfirmDelete(true)}><DeleteOutlineIcon fontSize="small" /></IconButton></Tooltip>
-          </Stack>
+          <div className="flex gap-1">
+            <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="size-8" onClick={() => setPanel('edit')} aria-label="编辑筛选器"><Pencil className="size-4" /></Button></TooltipTrigger><TooltipContent>编辑筛选器（名称 / 查询）</TooltipContent></Tooltip>
+            <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="size-8" onClick={() => setConfirmDelete(true)} aria-label="删除筛选器"><Trash2 className="size-4" /></Button></TooltipTrigger><TooltipContent>删除筛选器</TooltipContent></Tooltip>
+          </div>
         )}
-        <Box sx={{ flex: 1 }} />
-        <Typography variant="body2" color="text.secondary">{data ? `${data.total} 个任务` : ''}</Typography>
-      </Stack>
+        <div className="flex-1" />
+        <p className="text-sm text-muted-foreground">{data ? `${data.total} 个任务` : ''}</p>
+      </div>
 
-      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <TextField
-          fullWidth multiline minRows={1} maxRows={4}
+      <Card className="mb-4 gap-0 border p-3 py-3">
+        <Textarea
+          className="min-h-11 resize-y font-mono text-sm"
+          rows={2}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); run(draft, true); } }}
           placeholder='例如：project = BOS AND status IN (NEW, IN_PROGRESS) ORDER BY priority DESC'
-          error={!!queryError}
-          helperText={queryError ?? (dirty ? '已修改，尚未保存到筛选器' : ' ')}
-          InputProps={{
-            sx: { fontFamily: '"JetBrains Mono", Menlo, monospace', fontSize: 14 },
-            endAdornment: (
-              <InputAdornment position="end">
-                <Tooltip title="BQL 速查"><IconButton size="small" onClick={() => setHelpOpen((v) => !v)}><HelpOutlineIcon fontSize="small" /></IconButton></Tooltip>
-              </InputAdornment>
-            ),
-          }}
+          aria-invalid={!!queryError}
         />
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }} useFlexGap flexWrap="wrap">
-          <Button variant="contained" size="small" startIcon={<PlayArrowIcon />} onClick={() => run(draft, true)}>运行</Button>
+        <div className="mt-1 flex justify-end">
+          <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="size-8" onClick={() => setHelpOpen((v) => !v)} aria-label="BQL 速查"><BookOpen className="size-4" /></Button></TooltipTrigger><TooltipContent>BQL 速查</TooltipContent></Tooltip>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={() => run(draft, true)}><Play />运行</Button>
           {current
-            ? <Button size="small" startIcon={<SaveOutlinedIcon />} onClick={save} disabled={!dirty}>保存到「{current.name}」</Button>
-            : <Button size="small" startIcon={<SaveOutlinedIcon />} onClick={() => setPanel('new')} disabled={!draft.trim()}>另存为筛选器</Button>}
-          {current && <Button size="small" onClick={() => setPanel('new')} disabled={!draft.trim()}>另存为…</Button>}
-          <Box sx={{ flex: 1 }} />
-          <Typography variant="caption" color="text.secondary">示例：</Typography>
-          {EXAMPLES.map((ex) => <Chip key={ex} size="small" variant="outlined" label={ex} onClick={() => { setDraft(ex); run(ex); }} sx={{ fontFamily: 'monospace', maxWidth: 360 }} />)}
-        </Stack>
-        <Collapse in={helpOpen}><Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}><CheatSheet /></Box></Collapse>
-      </Paper>
+            ? <Button size="sm" variant="outline" onClick={save} disabled={!dirty}><Save />保存到「{current.name}」</Button>
+            : <Button size="sm" variant="outline" onClick={() => setPanel('new')} disabled={!draft.trim()}><Save />另存为筛选器</Button>}
+          {current && <Button size="sm" variant="ghost" onClick={() => setPanel('new')} disabled={!draft.trim()}>另存为…</Button>}
+          <div className="flex-1" />
+          <span className="text-xs text-muted-foreground">示例：</span>
+          {EXAMPLES.map((ex) => <Badge key={ex} variant="outline" className="max-w-90 cursor-pointer truncate font-mono font-normal" onClick={() => { setDraft(ex); run(ex); }}>{ex}</Badge>)}
+        </div>
+        {queryError && <p className="mt-1 text-xs text-destructive">{queryError}</p>}
+        {!queryError && dirty && <p className="mt-1 text-xs text-muted-foreground">已修改，尚未保存到筛选器</p>}
+        {helpOpen && <div className="mt-3 border-t pt-3"><CheatSheet /></div>}
+      </Card>
 
-      {error && !queryError && <Alert severity="error" sx={{ mb: 2 }}>{(error as Error).message}</Alert>}
+      {error && !queryError && <Alert variant="destructive" className="mb-4"><AlertDescription>{(error as Error).message}</AlertDescription></Alert>}
 
       <TaskTable
         rows={data?.tasks ?? []}
@@ -174,7 +166,7 @@ const QueryPage = () => {
         onConfirm={remove}
         onClose={() => setConfirmDelete(false)}
       />
-    </Box>
+    </div>
   );
 };
 

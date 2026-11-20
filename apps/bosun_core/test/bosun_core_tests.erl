@@ -21,12 +21,20 @@ core_test_() ->
         {"archived project rejects tasks", fun archived_project_rejects_tasks/0},
         {"concurrent task creation", fun concurrent_task_creation/0},
         {"full-text search", fun full_text_search/0},
+        {"search filter pushdown", fun search_filter_pushdown/0},
+        {"stale search index rebuilt", fun stale_search_index/0},
         {"actor registry", fun actor_registry/0},
         {"workflow doc", fun workflow_doc/0},
         {"roles, commits, tests & self-verify", fun roles_and_evidence/0},
         {"epics", fun epics/0},
         {"epic auto flow", fun epic_auto_flow/0},
-        {"links", fun links/0}
+        {"epic follows step membership", fun epic_membership_sync/0},
+        {"search ranks label and title hits above body", fun search_field_ranking/0},
+        {"search index rebuilt when unopenable or not ours", fun search_index_recovery/0},
+        {"search reads bypass the writer and survive reindex", fun search_concurrent_reads/0},
+        {"search index merge reclaims dead revisions", fun search_merge/0},
+        {"links", fun links/0},
+        {"rate limiter", fun rate_limiter/0}
     ],
     {foreach, fun setup/0, fun teardown/1,
      [fun(_) -> {Name, F} end || {Name, F} <- Tests]}.
@@ -327,7 +335,7 @@ full_text_search() ->
     ?assertEqual([<<"OTH-1">>], [maps:get(<<"id">>, maps:get(<<"task">>, H)) || H <- H3]),
     {ok, #{<<"hits">> := H4}} = bosun_task:search(<<"heal">>, #{<<"project">> => <<"SRC">>}),
     ?assert(length(H4) >= 1),
-    %% 标签也进索引，且标签命中排在正文命中前面（fields 加权）
+    %% 标签也进索引，且标签命中排在正文命中前面（字段 boost）
     {ok, _} = bosun_task:create(<<"SRC">>, #{<<"title">> => <<"Talk to the platform team">>, <<"description">> => <<"backend backend backend">>}),
     ok = bosun_search:sync(),
     {ok, #{<<"hits">> := [#{<<"task">> := #{<<"id">> := <<"SRC-1">>}}, #{<<"task">> := #{<<"id">> := <<"SRC-4">>}}]}} = bosun_task:search(<<"backend">>, #{}),
@@ -345,6 +353,241 @@ full_text_search() ->
     {ok, N} = bosun_search:reindex(),
     ?assertEqual(6, N),
     {ok, #{<<"hits">> := [_]}} = bosun_task:search(<<"manual">>, #{}).
+
+%% 项目 / 类型过滤下推到引擎：别的项目里分数更高的命中再多，也不会把本项目的挤掉
+search_filter_pushdown() ->
+    [bosun_search:index_task(#{<<"id">> => <<"BIG-", (integer_to_binary(I))/binary>>,
+                               <<"project_key">> => <<"BIG">>, <<"title">> => <<"deploy">>})
+     || I <- lists:seq(1, 300)],
+    Filler = iolist_to_binary(lists:duplicate(40, <<"lorem ipsum ">>)),
+    bosun_search:index_task(#{<<"id">> => <<"TINY-1">>, <<"project_key">> => <<"TINY">>,
+                              <<"title">> => <<"notes">>, <<"description">> => <<"deploy ", Filler/binary>>}),
+    bosun_search:index_feedback(#{<<"id">> => <<"BIG-1#1">>, <<"task_id">> => <<"BIG-1">>,
+                                  <<"content">> => <<"deploy ", Filler/binary>>}),
+    ok = bosun_search:sync(),
+    {ok, [#{id := <<"TINY-1">>}]} = bosun_search:search(<<"deploy">>, #{project => <<"tiny">>, limit => 1}),
+    {ok, [#{type := feedback, id := <<"BIG-1#1">>}]} =
+        bosun_search:search(<<"deploy">>, #{kinds => [feedback], limit => 5}),
+    {ok, Hits} = bosun_search:search(<<"deploy">>, #{project => <<"BIG">>, kinds => [task], limit => 500}),
+    ?assertEqual(300, length(Hits)).
+
+%% 旧格式（meta 没有版本号）的索引目录，启动时整个从 Mnesia 重建
+stale_search_index() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"STL">>, <<"name">> => <<"s">>}),
+    {ok, _} = bosun_task:create(<<"STL">>, #{<<"title">> => <<"fresh entry">>}),
+    Dir = filename:join(["/tmp", "bosun_test_stale_" ++ integer_to_list(erlang:system_time(millisecond))]),
+    ok = filelib:ensure_path(Dir),
+    H = bitcask:open(Dir, [read_write, {analyzer, jieba}, {enable_stop_words, true}]),
+    ok = bitcask:put(H, <<"task:GONE-1">>, #{text => <<"ghost entry">>,
+                                            meta => bitcask:encode_meta(#{<<"project">> => <<"GONE">>})}),
+    ok = bitcask:close(H),
+    ok = gen_server:stop(bosun_search),
+    {ok, Pid} = bosun_search:start_link(Dir),
+    unlink(Pid),
+    ?assertMatch(#{docs := 1}, bosun_search:status()),
+    {ok, []} = bosun_search:search(<<"ghost">>, #{}),
+    {ok, [#{id := <<"STL-1">>}]} = bosun_search:search(<<"fresh">>, #{}).
+
+%% 标签 / 标题命中排在正文命中前面，正文里词频再高也一样。只靠引擎内的字段 boost
+%% （labels^8、title^3），不在引擎外再加权（bitcask 10 时期的绕法，升 12 时去掉）。
+%% 标签命中与标题命中之间不定先后：各字段按自己的 BM25 统计打分，词在哪个字段里更稀有哪边就高
+search_field_ranking() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"RNK">>, <<"name">> => <<"r">>}),
+    {ok, _} = bosun_task:create(<<"RNK">>, #{<<"title">> => <<"body only">>,
+                                             <<"description">> => <<"zebra zebra zebra zebra zebra">>}),
+    {ok, _} = bosun_task:create(<<"RNK">>, #{<<"title">> => <<"about the zebra crossing">>,
+                                             <<"description">> => <<"some long unrelated text to dilute the score ">>}),
+    {ok, _} = bosun_task:create(<<"RNK">>, #{<<"title">> => <<"labelled">>, <<"labels">> => [<<"zebra">>],
+                                             <<"description">> => <<"some long unrelated text to dilute the score ">>}),
+    {ok, _} = bosun_feedback:add(<<"RNK-1">>, #{<<"content">> => <<"zebra in a comment">>}),
+    ok = bosun_search:sync(),
+    {ok, #{<<"hits">> := Hits}} = bosun_task:search(<<"zebra">>, #{}),
+    [First, Second, Third] = [maps:get(<<"id">>, maps:get(<<"task">>, H)) || H <- Hits],
+    ?assertEqual([<<"RNK-2">>, <<"RNK-3">>], lists:sort([First, Second])),
+    ?assertEqual(<<"RNK-1">>, Third),
+    %% 多词 AND 仍然成立
+    {ok, #{<<"hits">> := [#{<<"task">> := #{<<"id">> := <<"RNK-2">>}}]}} = bosun_task:search(<<"zebra crossing">>, #{}).
+
+%% 索引是派生数据：目录打不开就删掉重建，不拦启动；但不是索引的目录绝不动
+search_index_recovery() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"REC">>, <<"name">> => <<"r">>}),
+    {ok, _} = bosun_task:create(<<"REC">>, #{<<"title">> => <<"survivor">>}),
+    ok = bosun_search:sync(),
+    ok = gen_server:stop(bosun_search),
+    Stamp = integer_to_list(erlang:system_time(millisecond)),
+    %% 不是 bitcask 目录（里面有别的文件）：拒绝清空，启动失败，文件原样
+    Foreign = filename:join(["/tmp", "bosun_test_foreign_" ++ Stamp]),
+    ok = filelib:ensure_path(Foreign),
+    ok = file:write_file(filename:join(Foreign, "precious.txt"), <<"do not delete">>),
+    ok = file:write_file(filename:join(Foreign, "1.bitcask.hint"), <<"garbage">>),
+    process_flag(trap_exit, true),
+    case bosun_search:start_link(Foreign) of
+        {ok, P0} ->
+            %% 引擎愿意在这个目录里开库也行——关键是别的文件还在
+            unlink(P0), ok = gen_server:stop(bosun_search);
+        {error, _} -> receive {'EXIT', _, _} -> ok after 0 -> ok end
+    end,
+    process_flag(trap_exit, false),
+    ?assertEqual({ok, <<"do not delete">>}, file:read_file(filename:join(Foreign, "precious.txt"))),
+    %% reindex：删目录重建后照常可搜
+    Dir = filename:join(["/tmp", "bosun_test_rec_" ++ Stamp]),
+    {ok, Pid} = bosun_search:start_link(Dir),
+    unlink(Pid),
+    ?assertMatch(#{docs := 1}, bosun_search:status()),
+    {ok, 1} = bosun_search:reindex(),
+    {ok, 1} = bosun_search:reindex(),
+    ?assertMatch(#{docs := 1}, bosun_search:status()),
+    {ok, [#{id := <<"REC-1">>}]} = bosun_search:search(<<"survivor">>, #{}),
+    {ok, _} = bosun_task:create(<<"REC">>, #{<<"title">> => <<"latecomer">>}),
+    ok = bosun_search:sync(),
+    {ok, [#{id := <<"REC-2">>}]} = bosun_search:search(<<"latecomer">>, #{}).
+
+%% 读不经过写进程：写进程卡住（在重建 / 被挂起）时检索照常；重建换代期间并发检索一次都不失败
+search_concurrent_reads() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"CR">>, <<"name">> => <<"c">>}),
+    [{ok, _} = bosun_task:create(<<"CR">>, #{<<"title">> => <<"needle ", (integer_to_binary(I))/binary>>}) || I <- lists:seq(1, 20)],
+    ok = bosun_search:sync(),
+    ok = sys:suspend(bosun_search),
+    try
+        {ok, Hits} = bosun_search:search(<<"needle">>, #{limit => 50}),
+        ?assertEqual(20, length(Hits)),
+        ?assertMatch(#{docs := 20}, bosun_search:status())
+    after
+        ok = sys:resume(bosun_search)
+    end,
+    Self = self(),
+    Readers = [spawn_link(fun Loop() ->
+                   receive stop -> Self ! {done, self(), ok}
+                   after 0 ->
+                       case bosun_search:search(<<"needle">>, #{limit => 50}) of
+                           {ok, L} when length(L) =:= 20 -> Loop();
+                           Other -> Self ! {done, self(), {bad, Other}}
+                       end
+                   end
+               end) || _ <- lists:seq(1, 8)],
+    [{ok, 20} = bosun_search:reindex() || _ <- lists:seq(1, 5)],
+    [R ! stop || R <- Readers],
+    [receive {done, R, Res} -> ?assertEqual(ok, Res) after 5000 -> error(reader_stuck) end || R <- Readers],
+    %% 只剩当前这一代的目录
+    #{dir := Dir} = bosun_search:status(),
+    {ok, Gens} = file:list_dir(filename:dirname(Dir)),
+    ?assertEqual([filename:basename(Dir)], Gens),
+    %% 重建期间排队的写不丢
+    {ok, _} = bosun_task:create(<<"CR">>, #{<<"title">> => <<"needle late">>}),
+    ok = bosun_search:sync(),
+    {ok, Hits2} = bosun_search:search(<<"needle">>, #{limit => 50}),
+    ?assertEqual(21, length(Hits2)).
+
+%% 任务每改一次索引里多一篇、旧的那篇占着盘：merge 把死数据回收掉，检索结果不变，之后照常读写
+search_merge() ->
+    Task = fun(I, Rev) -> #{<<"id">> => <<"MG-", (integer_to_binary(I))/binary>>, <<"project_key">> => <<"MG">>,
+                            <<"title">> => <<"haystack item">>,
+                            <<"description">> => iolist_to_binary([<<"revision ">>, integer_to_binary(Rev), <<" ">>,
+                                                                   lists:duplicate(20, <<"lorem ipsum dolor ">>)])} end,
+    [bosun_search:index_task(Task(I, Rev)) || Rev <- lists:seq(1, 40), I <- lists:seq(1, 50)],
+    ok = bosun_search:sync(),
+    #{dir := Dir} = bosun_search:status(),
+    Size = fun() -> lists:sum([filelib:file_size(F) || F <- filelib:wildcard(filename:join(Dir, "*.bitcask.data"))]) end,
+    Hits = fun() -> {ok, L} = bosun_search:search(<<"haystack">>, #{limit => 100}), lists:sort([Id || #{id := Id} <- L]) end,
+    Before = Hits(),
+    ?assertEqual(50, length(Before)),
+    Size0 = Size(),
+    %% 死字节不到门槛（缺省 1 MB）：自动那一档不动
+    ?assertEqual({ok, not_needed}, bosun_search:merge()),
+    application:set_env(bosun_core, search_merge_min_dead_bytes, 1024),
+    try
+        {ok, #{reclaimed := Reclaimed, files := N}} = bosun_search:merge(),
+        ?assert(N >= 1),
+        ?assert(Reclaimed > 0),
+        ?assert(Size() * 4 < Size0),
+        ?assertEqual(Before, Hits()),
+        %% 刚并完，没什么可并的了
+        ?assertEqual({ok, not_needed}, bosun_search:merge()),
+        %% 之后的写、读、重启都正常
+        bosun_search:index_task(Task(51, 1)),
+        ok = bosun_search:sync(),
+        ?assertEqual(51, length(Hits())),
+        Root = filename:dirname(Dir),
+        ok = gen_server:stop(bosun_search),
+        {ok, Pid} = bosun_search:start_link(Root),
+        unlink(Pid),
+        ?assertEqual(51, length(Hits())),
+        ?assertMatch(#{docs := 51}, bosun_search:status()),
+        %% 定时那一路：到点自己跑。重启之后才变成死数据的文件也要能并掉
+        %% （引擎的 needs_merge 这时看不见它们，所以文件是按 status 自己挑的）
+        [bosun_search:index_task(Task(I, Rev)) || Rev <- lists:seq(1, 20), I <- lists:seq(1, 50)],
+        ok = bosun_search:sync(),
+        Size1 = Size(),
+        whereis(bosun_search) ! merge_tick,
+        ok = bosun_search:sync(),
+        ?assert(Size() * 2 < Size1),
+        ?assertEqual(51, length(Hits()))
+    after
+        application:unset_env(bosun_core, search_merge_min_dead_bytes)
+    end.
+
+%% Epic 的状态由步骤集合推导：不只步骤迁移，加步骤 / 换 Epic / 被替代撤销也要级联
+epic_membership_sync() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"EM">>, <<"name">> => <<"m">>}),
+    {ok, _} = bosun_task:create(<<"EM">>, #{<<"title">> => <<"goal">>, <<"kind">> => <<"epic">>}),
+    {ok, _} = bosun_task:create(<<"EM">>, #{<<"title">> => <<"s1">>, <<"epic">> => <<"EM-1">>}),
+    {ok, _} = bosun_task:create(<<"EM">>, #{<<"title">> => <<"s2">>, <<"epic">> => <<"EM-1">>}),
+    {ok, _} = bosun_task_status:transition(<<"EM-2">>, <<"IN_PROGRESS">>, #{actor => <<"a">>}),
+    {ok, _} = bosun_task_status:transition(<<"EM-2">>, <<"DONE">>, #{actor => <<"a">>}),
+    Status = fun(Id) -> {ok, T} = bosun_task:get(Id), maps:get(<<"status">>, T) end,
+    Last = fun(Id) -> {ok, #{<<"history">> := [H | _]}} = bosun_task:get(Id), H end,
+    ?assertEqual(<<"NEW">>, Status(<<"EM-1">>)),
+    %% 把没做完的步骤摘出去：剩下的全完成 → Epic 自动 DONE
+    {ok, _} = bosun_task:update(<<"EM-3">>, #{<<"epic">> => <<>>, <<"actor">> => <<"mover">>}),
+    ?assertEqual(<<"DONE">>, Status(<<"EM-1">>)),
+    ?assertMatch(#{<<"actor">> := <<"mover">>, <<"comment">> := <<"all steps completed (auto)">>}, Last(<<"EM-1">>)),
+    %% 再挂回来：Epic 回 IN_PROGRESS
+    {ok, _} = bosun_task:update(<<"EM-3">>, #{<<"epic">> => <<"EM-1">>}),
+    ?assertEqual(<<"IN_PROGRESS">>, Status(<<"EM-1">>)),
+    ?assertMatch(#{<<"comment">> := <<"steps changed (auto)">>}, Last(<<"EM-1">>)),
+    %% 步骤被 replaces 自动撤销：也算完成条件变化
+    {ok, _} = bosun_task:create(<<"EM">>, #{<<"title">> => <<"s2 redone elsewhere">>}),
+    {ok, _} = bosun_link:add(<<"EM-4">>, <<"EM-3">>, <<"replaces">>, #{actor => <<"a">>}),
+    ?assertEqual(<<"CANCELLED">>, Status(<<"EM-3">>)),
+    ?assertEqual(<<"DONE">>, Status(<<"EM-1">>)),
+    %% 给已完成的 Epic 新建步骤：Epic 回 IN_PROGRESS
+    {ok, _} = bosun_task:create(<<"EM">>, #{<<"title">> => <<"s3">>, <<"epic">> => <<"EM-1">>, <<"actor">> => <<"adder">>}),
+    ?assertEqual(<<"IN_PROGRESS">>, Status(<<"EM-1">>)),
+    ?assertMatch(#{<<"actor">> := <<"adder">>, <<"comment">> := <<"step added (auto)">>}, Last(<<"EM-1">>)),
+    %% 没变化的 update 不产生历史
+    {ok, #{<<"history">> := H1}} = bosun_task:get(<<"EM-1">>),
+    {ok, _} = bosun_task:update(<<"EM-5">>, #{<<"title">> => <<"s3 renamed">>}),
+    {ok, #{<<"history">> := H2}} = bosun_task:get(<<"EM-1">>),
+    ?assertEqual(length(H1), length(H2)).
+
+rate_limiter() ->
+    %% 进程没起来：一律放行
+    ?assertEqual(ok, bosun_rate_limit:hit(t, k, 1, 1000)),
+    {ok, Pid} = bosun_rate_limit:start_link(),
+    try
+        ?assertEqual(ok, bosun_rate_limit:check(t, k, 2, 1000)),
+        ?assertEqual(ok, bosun_rate_limit:hit(t, k, 2, 1000)),
+        ?assertEqual(ok, bosun_rate_limit:hit(t, k, 2, 1000)),
+        ?assertMatch({error, {too_many_requests, 1}}, bosun_rate_limit:hit(t, k, 2, 1000)),
+        ?assertMatch({error, {too_many_requests, _}}, bosun_rate_limit:check(t, k, 2, 1000)),
+        %% 别的 key / 别的桶互不影响
+        ?assertEqual(ok, bosun_rate_limit:hit(t, other, 2, 1000)),
+        ?assertEqual(ok, bosun_rate_limit:hit(u, k, 2, 1000)),
+        %% 清零、窗口到期
+        ok = bosun_rate_limit:reset(t, k),
+        ?assertEqual(ok, bosun_rate_limit:hit(t, k, 1, 60)),
+        ?assertMatch({error, _}, bosun_rate_limit:hit(t, k, 1, 60)),
+        timer:sleep(80),
+        ?assertEqual(ok, bosun_rate_limit:hit(t, k, 1, 60)),
+        %% 过期项会被清扫
+        timer:sleep(80),
+        Pid ! sweep,
+        _ = sys:get_state(Pid),
+        ?assertEqual([], ets:lookup(bosun_rate_limit, {t, k})),
+        ok = bosun_rate_limit:reset_all()
+    after
+        unlink(Pid), exit(Pid, shutdown)
+    end.
 
 workflow_doc() ->
     {ok, Zh} = bosun_workflow:doc(),
@@ -441,7 +684,8 @@ epics() ->
     {ok, E} = bosun_task:create(<<"EP">>, #{<<"title">> => <<"switch search to bitcask">>, <<"kind">> => <<"epic">>}),
     ?assertEqual(<<"epic">>, maps:get(<<"kind">>, E)),
     ?assertEqual(undefined, maps:get(<<"epic">>, E)),
-    ?assertMatch(#{<<"total">> := 0, <<"done">> := 0}, maps:get(<<"progress">>, E)),
+    ?assertMatch(#{<<"total">> := 0, <<"done">> := 0, <<"active_total">> := 0, <<"percent">> := 0},
+                 maps:get(<<"progress">>, E)),
     ?assertEqual([], maps:get(<<"children">>, E)),
     %% 普通任务缺省 kind = task，无 progress；挂到 Epic（含跨项目、id 大小写）
     {ok, T1} = bosun_task:create(<<"EP">>, #{<<"title">> => <<"index feedback">>, <<"epic">> => <<"ep-1">>}),
@@ -469,7 +713,12 @@ epics() ->
     {ok, _} = bosun_task_status:transition(<<"EP-2">>, <<"DONE">>, #{actor => <<"a">>}),
     {ok, _} = bosun_task_status:transition(<<"EP-2">>, <<"VERIFIED">>, #{actor => <<"b">>}),
     {ok, E2} = bosun_task:get(<<"EP-1">>),
-    ?assertMatch(#{<<"total">> := 2, <<"done">> := 1, <<"by_status">> := #{<<"VERIFIED">> := 1, <<"NEW">> := 1}}, maps:get(<<"progress">>, E2)),
+    ?assertMatch(#{<<"total">> := 2, <<"done">> := 1, <<"active_total">> := 2, <<"percent">> := 50,
+                   <<"by_status">> := #{<<"VERIFIED">> := 1, <<"NEW">> := 1}}, maps:get(<<"progress">>, E2)),
+    %% Epic 不能绕过子任务手动完成
+    {ok, _} = bosun_task_status:transition(<<"EP-1">>, <<"IN_PROGRESS">>, #{actor => <<"a">>}),
+    ?assertEqual({error, epic_children_incomplete},
+                 bosun_task_status:transition(<<"EP-1">>, <<"DONE">>, #{actor => <<"a">>})),
     ?assertEqual([<<"EP-2">>, <<"EQ-1">>], [maps:get(<<"id">>, C) || C <- maps:get(<<"children">>, E2)]),
     %% 列表过滤
     {ok, #{<<"tasks">> := [#{<<"id">> := <<"EP-1">>}]}} = bosun_task:list(<<"EP">>, #{<<"kind">> => <<"epic">>}),
@@ -488,6 +737,7 @@ epic_auto_flow() ->
     {ok, _} = bosun_task_status:transition(<<"EA-2">>, <<"DONE">>, #{actor => <<"a">>}),
     {ok, P1} = bosun_task:get(<<"EA-1">>),
     ?assertMatch(#{<<"total">> := 2, <<"done">> := 1,
+                   <<"active_total">> := 2, <<"percent">> := 50,
                    <<"by_status">> := #{<<"DONE">> := 1, <<"NEW">> := 1}}, maps:get(<<"progress">>, P1)),
     ?assertEqual(<<"NEW">>, maps:get(<<"status">>, P1)),
     %% 步骤全部完成（Epic 还在 NEW）→ Epic 自动 → DONE
@@ -512,7 +762,8 @@ epic_auto_flow() ->
     {ok, _} = bosun_task_status:transition(<<"EA-3">>, <<"CANCELLED">>, #{actor => <<"b">>}),
     {ok, P4} = bosun_task:get(<<"EA-1">>),
     ?assertEqual(<<"DONE">>, maps:get(<<"status">>, P4)),
-    ?assertMatch(#{<<"total">> := 2, <<"done">> := 1}, maps:get(<<"progress">>, P4)),
+    ?assertMatch(#{<<"total">> := 2, <<"done">> := 1, <<"cancelled">> := 1,
+                   <<"active_total">> := 1, <<"percent">> := 100}, maps:get(<<"progress">>, P4)),
     %% CANCELLED 的 Epic 不参与自动流转
     {ok, _} = bosun_task:create(<<"EA">>, #{<<"title">> => <<"later">>, <<"kind">> => <<"epic">>}),
     {ok, _} = bosun_task:create(<<"EA">>, #{<<"title">> => <<"step">>, <<"epic">> => <<"EA-4">>}),

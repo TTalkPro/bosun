@@ -18,7 +18,7 @@ add(TaskId0, Input) when is_map(Input) ->
                 {ok, Content, Author, Kind} ->
                     ok = bosun_actor:touch(Author, bosun_actor:parse_kind(maps:get(<<"author_kind">>, Input, undefined))),
                     indexed(bosun_store:transaction(fun() ->
-                        case mnesia:read(task, TaskId, write) of
+                        case bosun_task:read_in_tx(TaskId, write) of
                             [] -> bosun_store:abort(not_found);
                             [T] ->
                                 Seq = T#task.feedback_seq + 1,
@@ -49,6 +49,7 @@ revise(Id0, Input) when is_map(Input) ->
             Actor = bosun_util:get_bin(<<"actor">>, Input, <<>>),
             ok = bosun_actor:touch(Actor, bosun_actor:parse_kind(maps:get(<<"actor_kind">>, Input, undefined))),
             Res = bosun_store:transaction(fun() ->
+                bosun_task:read_in_tx(TaskId, read) =/= [] orelse bosun_store:abort(not_found),
                 case mnesia:read(feedback, Id, write) of
                     [] -> bosun_store:abort(not_found);
                     [#feedback{author = Author}] when Author =/= Actor ->
@@ -83,7 +84,7 @@ revise(Id0, Input) when is_map(Input) ->
 list(TaskId0) ->
     case bosun_id:parse_task_id(TaskId0) of
         {ok, TaskId, _, _} ->
-            case mnesia:dirty_read(task, TaskId) of
+            case bosun_task:read_dirty(TaskId) of
                 [] -> {error, not_found};
                 [_] -> {ok, [bosun_json:feedback_to_map(F) || F <- read_dirty(TaskId)]}
             end;
@@ -93,10 +94,10 @@ list(TaskId0) ->
 -spec get(term()) -> {ok, map()} | {error, term()}.
 get(Id0) ->
     case bosun_id:parse_feedback_id(Id0) of
-        {ok, Id, _, _} ->
-            case mnesia:dirty_read(feedback, Id) of
-                [F] -> {ok, bosun_json:feedback_to_map(F)};
-                [] -> {error, not_found}
+        {ok, Id, TaskId, _} ->
+            case {bosun_task:read_dirty(TaskId), mnesia:dirty_read(feedback, Id)} of
+                {[_], [F]} -> {ok, bosun_json:feedback_to_map(F)};
+                _ -> {error, not_found}
             end;
         {error, _} = E -> E
     end.
