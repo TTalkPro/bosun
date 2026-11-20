@@ -83,7 +83,7 @@ scripts/build-release.sh    # 前端 + rebar3 as prod tar → _build/prod/rel/bo
 
 ### Docker Compose
 
-根目录 `Dockerfile` + `docker-compose.yml`：多阶段构建（前端 → rebar3 release → slim 运行镜像），数据放在命名卷 `bosun-data`：
+根目录 `Dockerfile` + `docker-compose.yml`：多阶段构建（前端 → rebar3 release → slim 运行镜像），数据目录用宿主机目录挂到 `/var/lib/bosun`（当前为 `/home/david/apps/bosun`，按需改 `volumes`）：
 
 ```bash
 docker compose up -d --build        # 首次构建较久（bitcask 的 C++ NIF 要编一遍）

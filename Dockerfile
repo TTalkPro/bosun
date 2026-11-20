@@ -13,11 +13,17 @@ RUN pnpm build
 # ---------- release（rebar3 as prod tar，含 ERTS） ----------
 FROM erlang:28-bookworm AS build
 RUN apt-get update \
- && apt-get install -y --no-install-recommends cmake g++ libicu-dev \
+ && apt-get install -y --no-install-recommends cmake g++ libicu-dev libtbb-dev \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY rebar.config rebar.lock ./
-COPY config/ scripts/ docs/ ./
+COPY config/ config/
+COPY scripts/ scripts/
+COPY docs/ docs/
+RUN sed -i 's/{project_app_dirs, \[.*\]}\./{project_app_dirs, []}./' rebar.config \
+ && for i in 1 2 3 4 5; do rebar3 as prod compile && break; echo "== retry deps $i"; sleep 10; done; \
+    rebar3 as prod compile
+COPY rebar.config rebar.lock ./
 COPY apps/ apps/
 COPY --from=web /build/apps/bosun_web/priv/static apps/bosun_web/priv/static
 RUN rebar3 as prod tar \
@@ -25,9 +31,9 @@ RUN rebar3 as prod tar \
  && tar xzf _build/prod/rel/bosun/bosun-*.tar.gz -C /out
 
 # ---------- 运行 ----------
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libicu72 openssl ca-certificates curl \
+ && apt-get install -y --no-install-recommends libicu76 libtbb12 openssl ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --home-dir /opt/bosun --shell /usr/sbin/nologin bosun \
  && mkdir -p /var/lib/bosun \
