@@ -3,6 +3,9 @@ services:
     build: .
     image: bosun:local
     container_name: bosun
+    # 固定 hostname：节点名是 bosun@<hostname>，Mnesia 的磁盘 schema 绑定节点名，
+    # 容器重建后 hostname 一变就打不开库（所以不能用默认的容器 ID）
+    hostname: bosun
     restart: unless-stopped
     ports:
       - "${BOSUN_HTTP_PORT:-5000}:5000"

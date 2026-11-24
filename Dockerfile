@@ -2,7 +2,7 @@
 # 构建并启动：docker compose up -d --build
 
 # ---------- 前端（产物落到 /build/apps/bosun_web/priv/static） ----------
-FROM node:22-bookworm-slim AS web
+FROM node:24-trixie-slim AS web
 RUN npm install -g pnpm@10
 WORKDIR /build/web
 COPY web/package.json web/pnpm-lock.yaml ./
@@ -11,7 +11,8 @@ COPY web/ ./
 RUN pnpm build
 
 # ---------- release（rebar3 as prod tar，含 ERTS） ----------
-FROM erlang:28-bookworm AS build
+# 官方 erlang 镜像不带发行版后缀：28 现在基于 Debian 13（trixie），与下面运行镜像的 glibc / libicu 一致
+FROM erlang:28 AS build
 RUN apt-get update \
  && apt-get install -y --no-install-recommends cmake g++ libicu-dev libtbb-dev \
  && rm -rf /var/lib/apt/lists/*
