@@ -14,6 +14,6 @@
 
 - 后端：`scripts/dev-run.sh` / `scripts/dev-stop.sh`；测试 `rebar3 eunit`、`rebar3 ct`、`rebar3 check`
 - 前端：`cd web && pnpm build`（输出到 `apps/bosun_web/priv/static`）、`pnpm test`、`pnpm lint`、`pnpm typecheck`
-- 依赖 `_checkouts/` 软链到 `~/workspace/{beamai,beamai_extra,bitcask}`；bitcask 是 C++ NIF，首次编译约 3 分钟
+- 依赖 `_checkouts/` 软链到 `~/workspace/{beamai,beamai_extra}` 与 `~/workspace/bitcask/apps/bitcask`（bitcask 13.1.0 起是 umbrella）；bitcask 是 C++ NIF，首次编译约 3 分钟
 - 领域函数一律返回 `{ok, Map} | {error, Reason}`，REST / MCP 各自映射错误；对外 map 用 binary 键
 - 前端带输入的弹窗一律用 `SidePanel`，纯确认用 `ConfirmDialog`；小 chip 用 `SoftChip`

@@ -254,6 +254,8 @@ org_isolation() ->
         {ok, [#{<<"name">> := <<"Alice">>}]} = bosun_actor:list()
     end),
     ?assertEqual(<<"ACM-1">>, maps:get(<<"id">>, TaskA)),
+    %% B 的任务是在上面那次 sync 之后写的，索引是异步的：系统作用域不按组织过滤，查得到与否只看写进程跑没跑到
+    ok = bosun_search:sync(),
     %% 系统作用域看全部
     {ok, [_, _]} = bosun_project:list(#{}),
     {ok, [#{id := <<"ACM-1">>}]} = bosun_search:search(<<"secret">>, #{}),

@@ -74,4 +74,5 @@
 ## 8. 依赖升级与全项目审查（2026-11-19）
 - [x] [bitcask 6.7.1 → 10.0.0](tasks/2026-11-19-bitcask-10-upgrade.md)：旧索引自动重建、`search_fields_attributed` 按命中字段加权、索引打不开不拦启动
 - [x] [bitcask 10.0.0 → 12.0.0](tasks/2026-11-20-bitcask-12-upgrade.md)：去掉按命中字段加权与 merge 词典路径两处绕法；标签命中不再必然排在标题命中前面
+- [x] [bitcask 12.0.1 → 13.1.1](tasks/2026-11-24-bitcask-13-upgrade.md)：依赖改按 `git_subdir` 取 `apps/bitcask`（13.1.1 起干净环境才编得出 NIF）；代码不用改，既有索引直接可用
 - [x] [审查：缺陷修复与优化](tasks/2026-11-19-audit-fixes.md)：key 轮换越权、导入跨组织写、序号回退覆盖、BQL 500、Epic 级联、前端提示全哑等；没动的建议也列在里面

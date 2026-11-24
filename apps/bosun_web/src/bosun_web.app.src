@@ -1,6 +1,6 @@
 {application, bosun_web, [
     {description, "Bosun HTTP: REST API for the web UI, MCP endpoint, static SPA"},
-    {vsn, "0.1.0"},
+    {vsn, "0.1.1"},
     {registered, [bosun_web_sup]},
     {mod, {bosun_web_app, []}},
     {applications, [kernel, stdlib, cowboy, bosun_core, beamai_mcp, bosun_mcp]},
