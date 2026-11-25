@@ -10,7 +10,7 @@
 
 -export([encode/1, decode/1, iso8601/1,
          project_to_map/1, task_summary/2, task_full/2,
-         feedback_to_map/1, history_entry/1]).
+         feedback_to_map/1, history_entry/1, open_question/1]).
 
 %%====================================================================
 %% JSON
@@ -150,6 +150,7 @@ created_by(History) ->
     maps:get(actor, lists:last(History), undefined).
 
 %% 最新一条**有效**记录是 question 即视为「待回答」；作废的不算。
+-spec open_question([#feedback{}]) -> boolean().
 open_question(Feedbacks) ->
     case active(Feedbacks) of
         [] -> false;

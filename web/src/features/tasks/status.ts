@@ -62,3 +62,29 @@ export const PRIORITY_COLOR: Record<Priority, 'default' | 'info' | 'error'> = {
 // 路由参数 / 搜索框输入归一：bos-12 → BOS-12
 export const normalizeId = (raw: string): string => raw.trim().toUpperCase();
 export const isTaskId = (raw: string): boolean => /^[A-Z][A-Z0-9]{1,9}-[1-9][0-9]*$/.test(normalizeId(raw));
+
+// 状态 / 优先级的文字色与列头色条（StatusIcon、看板共用）
+export const STATUS_TEXT: Record<Status, string> = {
+  NEW: 'text-sky-600 dark:text-sky-400',
+  IN_PROGRESS: 'text-primary',
+  DONE: 'text-amber-600 dark:text-amber-400',
+  VERIFIED: 'text-emerald-600 dark:text-emerald-400',
+  REJECTED: 'text-destructive',
+  CANCELLED: 'text-muted-foreground',
+};
+
+/** 看板列头顶边的色条 */
+export const STATUS_BAR: Record<Status, string> = {
+  NEW: 'bg-sky-500',
+  IN_PROGRESS: 'bg-primary',
+  DONE: 'bg-amber-500',
+  VERIFIED: 'bg-emerald-500',
+  REJECTED: 'bg-destructive',
+  CANCELLED: 'bg-muted-foreground/50',
+};
+
+export const PRIORITY_TEXT: Record<Priority, string> = {
+  low: 'text-muted-foreground',
+  medium: 'text-sky-600 dark:text-sky-400',
+  high: 'text-destructive',
+};

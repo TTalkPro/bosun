@@ -21,6 +21,8 @@ auth_test_() ->
         {"backup scoped", fun backup_scoped/0},
         {"adopt orphans", fun adopt_orphans/0},
         {"import cannot reach into another org", fun import_cross_org/0},
+        {"importing filters does not duplicate them", fun import_filters_no_duplicates/0},
+        {"import dry run previews without writing", fun import_dry_run/0},
         {"key project whitelist covers projects & export", fun key_project_whitelist/0},
         {"password change / reset kills sessions", fun password_kills_sessions/0},
         {"system-scope backup keeps org ids", fun backup_keeps_orgs/0}
@@ -284,14 +286,14 @@ backup_scoped() ->
                    <<"counters">> := Cs} when map_size(Cs) =:= 0, ExportA),
     %% B 导入 A 的导出：项目 key 被 A 占着 → conflict
     ?assertEqual({error, {conflict, key}}, bosun_scope:with(PB, fun() -> bosun_backup:import(ExportA, #{mode => merge}) end)),
-    %% A 自己 replace 回去：任务还在，筛选器换了 id，B 的不受影响
-    {ok, #{<<"projects">> := 1, <<"tasks">> := 2, <<"filters">> := 1}} =
+    %% A 自己 replace 回去：任务还在，筛选器沿用原 id（书签链接不失效），B 的不受影响
+    {ok, #{<<"projects">> := 1, <<"tasks">> := 2, <<"filters">> := 1, <<"filters_skipped">> := 0}} =
         bosun_scope:with(PA, fun() -> bosun_backup:import(ExportA, #{mode => replace}) end),
     bosun_scope:with(PA, fun() ->
         {ok, #{<<"total">> := 2}} = bosun_task:list(<<"ACM">>, #{}),
         {ok, [#{<<"name">> := <<"fa">>, <<"id">> := NewId}]} = bosun_filter:list(),
         [#{<<"id">> := OldId}] = maps:get(<<"filters">>, ExportA),
-        ?assertNotEqual(OldId, NewId),
+        ?assertEqual(OldId, NewId),
         {ok, #{<<"blocked">> := true}} = bosun_task:get(<<"ACM-2">>)
     end),
     bosun_scope:with(PB, fun() ->
@@ -302,6 +304,90 @@ backup_scoped() ->
     %% 系统作用域导出带计数器与全部数据
     {ok, #{<<"projects">> := [_, _], <<"counters">> := Counters}} = bosun_backup:export(),
     ?assert(map_size(Counters) > 0).
+
+import_dry_run() ->
+    {_, A} = register(<<"Acme">>, <<"admin@acme.io">>, <<"Alice">>),
+    {_, B} = register(<<"Beta">>, <<"root@beta.io">>, <<"Bob">>),
+    PA = principal(A), PB = principal(B),
+    {ok, Export} = bosun_scope:with(PA, fun() ->
+        {ok, _} = bosun_project:create(#{<<"key">> => <<"ACM">>, <<"name">> => <<"Acme">>}),
+        {ok, _} = bosun_task:create(<<"ACM">>, #{<<"title">> => <<"a1">>, <<"actor">> => <<"Alice">>}),
+        {ok, _} = bosun_task:create(<<"ACM">>, #{<<"title">> => <<"a2">>, <<"actor">> => <<"Alice">>}),
+        {ok, _} = bosun_feedback:add(<<"ACM-1">>, #{<<"content">> => <<"note">>, <<"author">> => <<"Alice">>}),
+        {ok, _} = bosun_filter:create(#{<<"name">> => <<"fa">>, <<"query">> => <<"project = ACM">>}),
+        bosun_backup:export()
+    end),
+    %% 文件里再多一个新任务、一个新筛选器
+    Bigger = Export#{<<"tasks">> => maps:get(<<"tasks">>, Export) ++ [(hd(maps:get(<<"tasks">>, Export)))#{<<"id">> => <<"ACM-9">>, <<"seq">> => 9, <<"title">> => <<"new one">>}],
+                     <<"filters">> => maps:get(<<"filters">>, Export) ++ [#{<<"id">> => <<"f999">>, <<"name">> => <<"fresh">>, <<"query">> => <<"status = NEW">>}]},
+    Snapshot = fun() -> bosun_scope:with(PA, fun() ->
+                   {ok, #{<<"total">> := N}} = bosun_task:list(<<"ACM">>, #{}),
+                   {ok, Fs} = bosun_filter:list(),
+                   {N, lists:sort([I || #{<<"id">> := I} <- Fs])} end) end,
+    Before = Snapshot(),
+    %% 合并预演：项目 / 两个任务 / 反馈 / 筛选器 fa 是覆盖，新任务与新筛选器是新增
+    {ok, #{<<"dry_run">> := true, <<"mode">> := <<"merge">>, <<"detail">> := M}} =
+        bosun_scope:with(PA, fun() -> bosun_backup:import(Bigger, #{mode => merge, dry_run => true}) end),
+    ?assertMatch(#{<<"projects">> := #{<<"new">> := 0, <<"updated">> := 1},
+                   <<"tasks">> := #{<<"new">> := 1, <<"updated">> := 2},
+                   <<"feedback">> := #{<<"new">> := 0, <<"updated">> := 1},
+                   <<"filters">> := #{<<"new">> := 1, <<"updated">> := 1, <<"skipped">> := 0},
+                   <<"deleted">> := null}, M),
+    %% 替换预演：先数出将删除的，写入的都算新增
+    {ok, #{<<"detail">> := R}} = bosun_scope:with(PA, fun() -> bosun_backup:import(Bigger, #{mode => replace, dry_run => true}) end),
+    ?assertMatch(#{<<"deleted">> := #{<<"projects">> := 1, <<"tasks">> := 2, <<"feedback">> := 1, <<"filters">> := 1},
+                   <<"projects">> := #{<<"new">> := 1, <<"updated">> := 0}, <<"tasks">> := #{<<"new">> := 3}}, R),
+    %% 什么都没写：任务数、筛选器都没变；筛选器 id 计数器也没被预演消耗
+    ?assertEqual(Before, Snapshot()),
+    {ok, #{<<"id">> := <<"f", NextBin/binary>>}} = bosun_scope:with(PA, fun() -> bosun_filter:create(#{<<"name">> => <<"x">>, <<"query">> => <<"status = NEW">>}) end),
+    [<<"f", LastBin/binary>> | _] = lists:reverse(lists:sort(fun(X, Y) -> byte_size(X) < byte_size(Y) orelse (byte_size(X) =:= byte_size(Y) andalso X =< Y) end, element(2, Before))),
+    ?assertEqual(binary_to_integer(LastBin) + 1, binary_to_integer(NextBin)),
+    %% 出错照样报：B 预演 A 的文件 → 项目 key 被占
+    ?assertEqual({error, {conflict, key}}, bosun_scope:with(PB, fun() -> bosun_backup:import(Export, #{mode => merge, dry_run => true}) end)).
+
+%% 同一份导出合并导入多次不再多出筛选器；同 id 覆盖、同名同查询跳过、别的组织的 id 不碰
+import_filters_no_duplicates() ->
+    {_, A} = register(<<"Acme">>, <<"admin@acme.io">>, <<"Alice">>),
+    {_, B} = register(<<"Beta">>, <<"root@beta.io">>, <<"Bob">>),
+    PA = principal(A), PB = principal(B),
+    {ok, #{<<"id">> := FbId}} = bosun_scope:with(PB, fun() ->
+        bosun_filter:create(#{<<"name">> => <<"fb">>, <<"query">> => <<"status = NEW">>}) end),
+    {ok, Export} = bosun_scope:with(PA, fun() ->
+        {ok, _} = bosun_project:create(#{<<"key">> => <<"ACM">>, <<"name">> => <<"Acme">>}),
+        {ok, _} = bosun_filter:create(#{<<"name">> => <<"open">>, <<"query">> => <<"status = NEW">>}),
+        {ok, _} = bosun_filter:create(#{<<"name">> => <<"mine">>, <<"query">> => <<"reporter = Alice">>}),
+        bosun_backup:export()
+    end),
+    Names = fun() -> {ok, Fs} = bosun_scope:with(PA, fun() -> bosun_filter:list() end),
+                     lists:sort([{N, I} || #{<<"name">> := N, <<"id">> := I} <- Fs]) end,
+    Before = Names(),
+    %% 合并两次：同 id 覆盖，不多出来
+    {ok, #{<<"filters">> := 2, <<"filters_skipped">> := 0}} =
+        bosun_scope:with(PA, fun() -> bosun_backup:import(Export, #{mode => merge}) end),
+    {ok, #{<<"filters">> := 2}} = bosun_scope:with(PA, fun() -> bosun_backup:import(Export, #{mode => merge}) end),
+    ?assertEqual(Before, Names()),
+    %% 同 id 覆盖：导出之后改过的筛选器被文件内容改回来
+    [{_, MineId}] = [X || {<<"mine">>, _} = X <- Before],
+    {ok, _} = bosun_scope:with(PA, fun() -> bosun_filter:update(MineId, #{<<"name">> => <<"mine (edited)">>}) end),
+    {ok, _} = bosun_scope:with(PA, fun() -> bosun_backup:import(Export, #{mode => merge}) end),
+    ?assertEqual(Before, Names()),
+    %% 来自别的实例的文件（id 不是本组织的）：同名同查询的跳过，新的发新 id，文件里重复的只留一份
+    Foreign = Export#{<<"filters">> => [
+        #{<<"id">> => <<"f9001">>, <<"name">> => <<"open">>, <<"query">> => <<"status = NEW">>},
+        #{<<"id">> => <<"f9002">>, <<"name">> => <<"done">>, <<"query">> => <<"status = DONE">>},
+        #{<<"id">> => <<"f9003">>, <<"name">> => <<"done">>, <<"query">> => <<"status = DONE">>},
+        %% B 的筛选器 id：不能覆盖 B 的
+        #{<<"id">> => FbId, <<"name">> => <<"stolen">>, <<"query">> => <<"status = NEW">>}]},
+    {ok, #{<<"filters">> := 2, <<"filters_skipped">> := 2}} =
+        bosun_scope:with(PA, fun() -> bosun_backup:import(Foreign, #{mode => merge}) end),
+    After = Names(),
+    ?assertEqual([<<"done">>, <<"mine">>, <<"open">>, <<"stolen">>], [N || {N, _} <- After]),
+    ?assertEqual([], [I || {_, I} <- After, lists:member(I, [<<"f9001">>, <<"f9002">>, <<"f9003">>, FbId])]),
+    {ok, [#{<<"id">> := FbId, <<"name">> := <<"fb">>}]} = bosun_scope:with(PB, fun() -> bosun_filter:list() end),
+    %% replace：本组织原有的 id 沿用，文件里没有的删掉
+    {ok, #{<<"filters">> := 2, <<"filters_skipped">> := 0}} =
+        bosun_scope:with(PA, fun() -> bosun_backup:import(Export, #{mode => replace}) end),
+    ?assertEqual(Before, Names()).
 
 %% 组织 B 的管理员拿一个写着组织 A 项目 key 的文件，改不了 A 的任何东西
 import_cross_org() ->

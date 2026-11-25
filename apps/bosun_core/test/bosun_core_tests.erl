@@ -14,6 +14,7 @@ core_test_() ->
         {"project conflict & update", fun project_conflict_and_update/0},
         {"task sequence per project", fun task_sequence_per_project/0},
         {"task list filters", fun task_list_filters/0},
+        {"task list facets and sort", fun task_list_facets_and_sort/0},
         {"task update ignores status", fun task_update_ignores_status/0},
         {"status transition table", fun status_transition_table/0},
         {"status transition flow", fun status_transition_flow/0},
@@ -34,6 +35,7 @@ core_test_() ->
         {"search reads bypass the writer and survive reindex", fun search_concurrent_reads/0},
         {"search index merge reclaims dead revisions", fun search_merge/0},
         {"links", fun links/0},
+        {"stats overview", fun stats_overview/0},
         {"rate limiter", fun rate_limiter/0}
     ],
     {foreach, fun setup/0, fun teardown/1,
@@ -133,6 +135,43 @@ task_list_filters() ->
     {ok, #{<<"tasks">> := []}} = bosun_task:list(<<"LST">>, #{<<"offset">> => 100}),
     ?assertMatch({error, {invalid, status, _}}, bosun_task:list(<<"LST">>, #{<<"status">> => <<"bogus">>})),
     ?assertEqual({error, {project, not_found}}, bosun_task:list(<<"NOPE">>, #{})).
+
+task_list_facets_and_sort() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"SRT">>, <<"name">> => <<"s">>}),
+    Mk = fun(Title, Pri, Who) ->
+                 In = #{<<"title">> => Title, <<"priority">> => Pri},
+                 {ok, _} = bosun_task:create(<<"SRT">>, case Who of none -> In; _ -> In#{<<"assignee">> => Who} end)
+         end,
+    Mk(<<"banana">>, <<"low">>, <<"bob">>),        %% SRT-1
+    Mk(<<"apple">>, <<"high">>, none),             %% SRT-2
+    Mk(<<"cherry">>, <<"medium">>, <<"alice">>),   %% SRT-3
+    Mk(<<"date">>, <<"high">>, <<"alice">>),       %% SRT-4
+    {ok, _} = bosun_task_status:transition(<<"SRT-3">>, <<"IN_PROGRESS">>, #{actor => <<"alice">>}),
+    {ok, _} = bosun_feedback:add(<<"SRT-1">>, #{<<"content">> => <<"a">>}),
+    {ok, _} = bosun_feedback:add(<<"SRT-1">>, #{<<"content">> => <<"why?">>, <<"kind">> => <<"question">>}),
+    {ok, _} = bosun_link:add(<<"SRT-2">>, <<"SRT-3">>, <<"depends_on">>, #{}),
+    Ids = fun(F) -> {ok, #{<<"tasks">> := Ts}} = bosun_task:list(<<"SRT">>, F), [maps:get(<<"id">>, T) || T <- Ts] end,
+    %% 分面：优先级、执行人（含未领取）、需要关注（被阻塞 / 待回答）
+    ?assertEqual([<<"SRT-4">>, <<"SRT-2">>], Ids(#{<<"priority">> => <<"high">>})),
+    ?assertEqual([<<"SRT-4">>, <<"SRT-3">>, <<"SRT-1">>], Ids(#{<<"priority">> => [<<"high">>, <<"medium">>, <<"low">>], <<"assignee">> => <<"alice,bob">>})),
+    ?assertEqual([<<"SRT-4">>, <<"SRT-3">>, <<"SRT-2">>], Ids(#{<<"assignee">> => <<"alice, ~none">>})),
+    ?assertEqual([<<"SRT-2">>, <<"SRT-1">>], Ids(#{<<"attention">> => <<"true">>})),
+    %% 排序：各字段 + 方向；同键按编号新在前
+    ?assertEqual([<<"SRT-2">>, <<"SRT-1">>, <<"SRT-3">>, <<"SRT-4">>], Ids(#{<<"sort">> => <<"title">>})),
+    ?assertEqual([<<"SRT-4">>, <<"SRT-3">>, <<"SRT-1">>, <<"SRT-2">>], Ids(#{<<"sort">> => <<"title:desc">>})),
+    ?assertEqual([<<"SRT-4">>, <<"SRT-2">>, <<"SRT-3">>, <<"SRT-1">>], Ids(#{<<"sort">> => <<"priority">>})),
+    ?assertEqual([<<"SRT-1">>, <<"SRT-3">>, <<"SRT-4">>, <<"SRT-2">>], Ids(#{<<"sort">> => <<"priority:asc">>})),
+    ?assertEqual([<<"SRT-1">>, <<"SRT-2">>, <<"SRT-3">>, <<"SRT-4">>], Ids(#{<<"sort">> => <<"id:asc">>})),
+    ?assertEqual([<<"SRT-4">>, <<"SRT-3">>, <<"SRT-1">>, <<"SRT-2">>], Ids(#{<<"sort">> => <<"assignee">>})),
+    ?assertEqual([<<"SRT-4">>, <<"SRT-2">>, <<"SRT-1">>, <<"SRT-3">>], Ids(#{<<"sort">> => <<"status">>})),
+    ?assertEqual(<<"SRT-1">>, hd(Ids(#{<<"sort">> => <<"feedback">>}))),
+    %% 排序与分页一起：先排序再切页
+    {ok, #{<<"tasks">> := [#{<<"id">> := <<"SRT-2">>}], <<"total">> := 4}} =
+        bosun_task:list(<<"SRT">>, #{<<"sort">> => <<"id:asc">>, <<"offset">> => 1, <<"limit">> => 1}),
+    %% 不认识的值 400
+    ?assertMatch({error, {invalid, priority, _}}, bosun_task:list(<<"SRT">>, #{<<"priority">> => <<"urgent">>})),
+    ?assertMatch({error, {invalid, sort, _}}, bosun_task:list(<<"SRT">>, #{<<"sort">> => <<"bogus">>})),
+    ?assertMatch({error, {invalid, sort, _}}, bosun_task:list(<<"SRT">>, #{<<"sort">> => <<"title:up">>})).
 
 task_update_ignores_status() ->
     {ok, _} = bosun_project:create(#{<<"key">> => <<"UPD">>, <<"name">> => <<"u">>}),
@@ -779,6 +818,55 @@ epic_auto_flow() ->
     {ok, _} = bosun_task_status:transition(<<"EA-6">>, <<"DONE">>, #{actor => <<"a">>}),
     {ok, P6} = bosun_task:get(<<"EB-1">>),
     ?assertEqual(<<"DONE">>, maps:get(<<"status">>, P6)).
+
+stats_overview() ->
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"SA">>, <<"name">> => <<"a">>}),
+    {ok, _} = bosun_project:create(#{<<"key">> => <<"SB">>, <<"name">> => <<"b">>}),
+    [{ok, _} = bosun_task:create(<<"SA">>, #{<<"title">> => T}) || T <- [<<"one">>, <<"two">>, <<"three">>, <<"four">>]],
+    {ok, _} = bosun_task:create(<<"SB">>, #{<<"title">> => <<"epic">>, <<"kind">> => <<"epic">>}),
+    %% SA-1 完成两次（打回后再完成），SA-2 撤销，SA-4 依赖 SA-3（被阻塞），SA-3 有待回答的提问
+    {ok, _} = bosun_task_status:transition(<<"SA-1">>, <<"IN_PROGRESS">>, #{}),
+    {ok, _} = bosun_task_status:transition(<<"SA-1">>, <<"DONE">>, #{}),
+    {ok, _} = bosun_task_status:transition(<<"SA-1">>, <<"IN_PROGRESS">>, #{}),
+    {ok, _} = bosun_task_status:transition(<<"SA-1">>, <<"DONE">>, #{}),
+    {ok, _} = bosun_task_status:transition(<<"SA-2">>, <<"CANCELLED">>, #{}),
+    {ok, _} = bosun_link:add(<<"SA-4">>, <<"SA-3">>, <<"depends_on">>, #{}),
+    {ok, _} = bosun_feedback:add(<<"SA-3">>, #{<<"content">> => <<"why?">>, <<"kind">> => <<"question">>}),
+    {ok, S} = bosun_stats:overview(#{days => 7}),
+    #{<<"projects">> := #{<<"SA">> := A, <<"SB">> := B}, <<"totals">> := Tot, <<"daily">> := Daily} = S,
+    ?assertMatch(#{<<"total">> := 4, <<"open">> := 3, <<"blocked">> := 1, <<"open_questions">> := 1, <<"epics">> := 0,
+                   <<"by_status">> := #{<<"NEW">> := 2, <<"DONE">> := 1, <<"CANCELLED">> := 1, <<"VERIFIED">> := 0}}, A),
+    ?assertMatch(#{<<"total">> := 1, <<"open">> := 1, <<"epics">> := 1}, B),
+    %% 分面计数：SA-1 完成过（领取人 = 缺省 actor user），其余未领取；优先级缺省 medium
+    ?assertMatch(#{<<"by_assignee">> := #{<<"user">> := 1}, <<"unassigned">> := 3,
+                   <<"by_priority">> := #{<<"medium">> := 4, <<"high">> := 0, <<"low">> := 0}}, A),
+    ?assertMatch(#{<<"unassigned">> := 4, <<"by_assignee">> := #{<<"user">> := 1}}, Tot),
+    %% 未结按执行人：SA-1 是 user 的、已完成（DONE 仍算未结）；SA-2 撤销了不算；SA-3 / SA-4 / SB-1 未领取
+    ?assertMatch(#{<<"open_by_assignee">> := #{<<"user">> := 1}, <<"open_unassigned">> := 2}, A),
+    ?assertMatch(#{<<"open_by_assignee">> := #{<<"user">> := 1}, <<"open_unassigned">> := 3}, Tot),
+    ?assertMatch(#{<<"total">> := 5, <<"open">> := 4, <<"blocked">> := 1, <<"open_questions">> := 1,
+                   <<"by_status">> := #{<<"NEW">> := 3}}, Tot),
+    ?assertEqual(7, length(Daily)),
+    %% 今天：建了 5 个，完成两次（同一个任务完成两次各记一次）
+    ?assertMatch(#{<<"created">> := 5, <<"completed">> := 2}, lists:last(Daily)),
+    ?assertEqual(0, lists:sum([maps:get(<<"created">>, D) || D <- lists:droplast(Daily)])),
+    %% 日期连续、最后一天是今天（UTC）
+    {Today, _} = calendar:system_time_to_universal_time(bosun_util:now_ms(), millisecond),
+    {Y, M, D} = Today,
+    ?assertEqual(iolist_to_binary(io_lib:format("~4..0B-~2..0B-~2..0B", [Y, M, D])), maps:get(<<"date">>, lists:last(Daily))),
+    %% 一周后再看：这些都落在窗口外
+    {ok, Later} = bosun_stats:overview(#{days => 7, now => bosun_util:now_ms() + 8 * 86400000}),
+    ?assertEqual(0, lists:sum([maps:get(<<"created">>, X) + maps:get(<<"completed">>, X) || X <- maps:get(<<"daily">>, Later)])),
+    %% 只看一个项目：计数与 daily 都只算它；不存在的项目 not_found
+    {ok, OnlyB} = bosun_stats:overview(#{days => 7, project => <<"sb">>}),
+    ?assertEqual([<<"SB">>], maps:keys(maps:get(<<"projects">>, OnlyB))),
+    ?assertMatch(#{<<"total">> := 1}, maps:get(<<"totals">>, OnlyB)),
+    ?assertMatch(#{<<"created">> := 1, <<"completed">> := 0}, lists:last(maps:get(<<"daily">>, OnlyB))),
+    ?assertEqual({error, not_found}, bosun_stats:overview(#{project => <<"NOPE">>})),
+    %% 参数越界被夹住
+    {ok, Wide} = bosun_stats:overview(#{days => 1000, tz_offset => 99999}),
+    ?assertMatch(#{<<"days">> := 90, <<"tz_offset">> := 840}, Wide),
+    ?assertEqual(90, length(maps:get(<<"daily">>, Wide))).
 
 links() ->
     {ok, _} = bosun_project:create(#{<<"key">> => <<"LN">>, <<"name">> => <<"l">>}),

@@ -125,6 +125,13 @@ export interface TaskFilter {
   q?: string;
   kind?: TaskKind;
   epic?: string;
+  priority?: Priority[];
+  /** 执行人名；'~none' = 未领取 */
+  assignee?: string[];
+  /** 只要被阻塞或有提问待回答的 */
+  attention?: boolean;
+  /** field[:asc|desc]；field ∈ id / title / status / priority / assignee / feedback / updated / created */
+  sort?: string;
   limit?: number;
   offset?: number;
 }

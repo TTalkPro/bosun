@@ -63,6 +63,11 @@ rest_chain(Config) ->
     {200, #{<<"tasks">> := [_, _], <<"total">> := 2}} = req(get, Config, "/api/v1/projects/WEB/tasks"),
     {200, #{<<"tasks">> := [#{<<"id">> := <<"WEB-1">>}], <<"total">> := 1}} =
         req(get, Config, "/api/v1/projects/WEB/tasks?label=ui&status=NEW,IN_PROGRESS"),
+    %% 排序 / 分面经 REST：查询串原样进 bosun_task:list
+    {200, #{<<"tasks">> := [#{<<"id">> := <<"WEB-1">>}, #{<<"id">> := <<"WEB-2">>}]}} =
+        req(get, Config, "/api/v1/projects/WEB/tasks?sort=id:asc"),
+    {200, #{<<"total">> := 2}} = req(get, Config, "/api/v1/projects/WEB/tasks?assignee=~none&priority=medium"),
+    {400, #{<<"error">> := <<"invalid">>}} = req(get, Config, "/api/v1/projects/WEB/tasks?sort=nope"),
     {200, #{<<"title">> := <<"first">>, <<"feedback">> := []}} = req(get, Config, "/api/v1/tasks/web-1"),
     %% epic：建 Epic、挂步骤、按 kind / epic 过滤、详情带 children + progress
     {201, #{<<"id">> := <<"WEB-3">>, <<"kind">> := <<"epic">>}} =
@@ -430,6 +435,14 @@ org_isolation(Config) ->
     {404, _} = req(post, B, "/api/v1/tasks/ACM-1/feedback", #{<<"content">> => <<"hi">>}),
     {200, #{<<"hits">> := []}} = req(get, B, "/api/v1/search?q=secret"),
     {200, #{<<"total">> := 0}} = req(get, B, "/api/v1/query?q=project%20%3D%20ACM"),
+    %% 统计：只数本组织；写坏的参数按缺省
+    {200, #{<<"projects">> := SB, <<"totals">> := #{<<"total">> := 0}, <<"days">> := 14}} = req(get, B, "/api/v1/stats?days=abc"),
+    ?assertEqual(#{}, SB),
+    {200, #{<<"projects">> := #{<<"ACM">> := #{<<"total">> := 1, <<"open">> := 1}}, <<"daily">> := Daily}} =
+        req(get, Config, "/api/v1/stats?days=7&tz=480"),
+    ?assertEqual(1, lists:sum([C || #{<<"created">> := C} <- Daily])),
+    {404, _} = req(get, B, "/api/v1/stats?project=ACM"),
+    {200, #{<<"projects">> := #{<<"ACM">> := _}}} = req(get, Config, "/api/v1/stats?project=acm"),
     {200, #{<<"filters">> := []}} = req(get, B, "/api/v1/filters"),
     {200, #{<<"actors">> := Actors}} = req(get, B, "/api/v1/actors"),
     ?assertEqual([<<"Root">>], [N || #{<<"name">> := N} <- Actors]),

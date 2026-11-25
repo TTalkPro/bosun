@@ -74,6 +74,18 @@ export const setThemeMode = (mode: ThemeMode) => {
 
 export const toggleTheme = () => setThemeMode(current === 'dark' ? 'light' : 'dark');
 
+/** 没有落盘的偏好 = 跟随系统。是否跟随的变化总伴随着生效模式的变化（见上面的规则），
+ *  所以用 useThemeMode 驱动重渲染、渲染时读它就够了 */
+export const isFollowingSystem = (): boolean => storedMode() === null;
+
+export const getSystemMode = (): ThemeMode => systemMode();
+
+/** 清掉偏好，回到跟随系统 */
+export const followSystem = () => {
+  store(null);
+  refresh();
+};
+
 /** 当前生效的明暗模式；切换时所有用到的组件一起重渲染 */
 export const useThemeMode = (): ThemeMode => useSyncExternalStore(subscribe, getThemeMode);
 

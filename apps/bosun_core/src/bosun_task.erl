@@ -88,7 +88,7 @@ list(Key0, Filter) when is_map(Filter) ->
                             All = mnesia:dirty_index_read(task, Key, #task.project_key),
                             Sorted = lists:sort(fun(A, B) -> A#task.seq >= B#task.seq end, All),
                             Candidates = with_query(Key, Sorted, maps:get(q, F)),
-                            Matched = [T || T <- Candidates, matches(T, F)],
+                            Matched = sort_by(maps:get(sort, F), [T || T <- Candidates, matches(T, F)]),
                             Total = length(Matched),
                             Page = page(Matched, maps:get(offset, F), maps:get(limit, F)),
                             Summaries = [bosun_json:task_summary(T, bosun_feedback:read_dirty(T#task.id))
@@ -381,12 +381,109 @@ parse_filter(Filter) ->
                <<>> -> undefined;
                E0 -> string:uppercase(bosun_util:trim(E0))
            end,
-    case {parse_statuses(maps:get(<<"status">>, Filter, undefined)), parse_kind_filter(maps:get(<<"kind">>, Filter, undefined))} of
-        {{ok, Statuses}, {ok, Kind}} ->
-            {ok, #{status => Statuses, label => Label, q => Q, kind => Kind, epic => Epic, limit => Limit, offset => Offset}};
-        {{error, _} = E, _} -> E;
-        {_, {error, _} = E} -> E
+    Attention = bosun_util:to_bool(maps:get(<<"attention">>, Filter, false), false),
+    Checks = [parse_statuses(maps:get(<<"status">>, Filter, undefined)),
+              parse_kind_filter(maps:get(<<"kind">>, Filter, undefined)),
+              parse_priorities(maps:get(<<"priority">>, Filter, undefined)),
+              parse_assignees(maps:get(<<"assignee">>, Filter, undefined)),
+              parse_sort(maps:get(<<"sort">>, Filter, undefined))],
+    case [E || {error, _} = E <- Checks] of
+        [E | _] -> E;
+        [] ->
+            [{ok, Statuses}, {ok, Kind}, {ok, Priorities}, {ok, Assignees}, {ok, Sort}] = Checks,
+            {ok, #{status => Statuses, label => Label, q => Q, kind => Kind, epic => Epic,
+                   priority => Priorities, assignee => Assignees, attention => Attention, sort => Sort,
+                   limit => Limit, offset => Offset}}
     end.
+
+%% 逗号分隔的串或列表 → 去空白后的非空项
+csv(undefined) -> [];
+csv(null) -> [];
+csv(Bin) when is_binary(Bin) -> csv(binary:split(Bin, <<",">>, [global]));
+csv(List) when is_list(List) -> [V || X <- List, is_binary(X), V <- [bosun_util:trim(X)], V =/= <<>>];
+csv(_) -> error.
+
+parse_priorities(V) ->
+    case csv(V) of
+        error -> {error, {invalid, priority, <<"expected a list of priorities">>}};
+        [] -> {ok, undefined};
+        Items ->
+            Parsed = [facet_priority(I) || I <- Items],
+            case lists:member(invalid, Parsed) of
+                false -> {ok, Parsed};
+                true -> {error, {invalid, priority, <<"must be low, medium or high">>}}
+            end
+    end.
+
+%% 筛选用：直接回原子，不认识的回 invalid（不同于建单时 parse_priority/1 的 {ok, _} / 缺省 medium）
+facet_priority(<<"low">>) -> low;
+facet_priority(<<"medium">>) -> medium;
+facet_priority(<<"high">>) -> high;
+facet_priority(_) -> invalid.
+
+%% 执行人：名字列表；`~none' 表示「未领取」（与前端看板的写法一致）
+parse_assignees(V) ->
+    case csv(V) of
+        error -> {error, {invalid, assignee, <<"expected a list of names">>}};
+        [] -> {ok, undefined};
+        Items -> {ok, [case I of <<"~none">> -> undefined; _ -> I end || I <- Items]}
+    end.
+
+%% sort=field[:asc|desc]；缺省方向：id / updated / created / priority / feedback 降序，其余升序。
+%% 不给 sort 时保持原来的顺序（最新在前；有 q 时按相关度）。
+-define(SORT_FIELDS, [<<"id">>, <<"title">>, <<"status">>, <<"priority">>, <<"assignee">>,
+                      <<"feedback">>, <<"updated">>, <<"created">>]).
+parse_sort(undefined) -> {ok, undefined};
+parse_sort(null) -> {ok, undefined};
+parse_sort(<<>>) -> {ok, undefined};
+parse_sort(Bin) when is_binary(Bin) ->
+    {Field, Dir0} = case binary:split(string:lowercase(bosun_util:trim(Bin)), <<":">>) of
+                        [F] -> {F, default};
+                        [F, D] -> {F, D}
+                    end,
+    case lists:member(Field, ?SORT_FIELDS) of
+        false -> {error, {invalid, sort, <<"unknown sort field ", Field/binary>>}};
+        true ->
+            case Dir0 of
+                default -> {ok, {binary_to_atom(Field), default_dir(Field)}};
+                <<"asc">> -> {ok, {binary_to_atom(Field), asc}};
+                <<"desc">> -> {ok, {binary_to_atom(Field), desc}};
+                _ -> {error, {invalid, sort, <<"direction must be asc or desc">>}}
+            end
+    end;
+parse_sort(_) -> {error, {invalid, sort, <<"expected field[:asc|desc]">>}}.
+
+default_dir(F) when F =:= <<"title">>; F =:= <<"status">>; F =:= <<"assignee">> -> asc;
+default_dir(_) -> desc.
+
+sort_by(undefined, Tasks) -> Tasks;
+sort_by({Field, Dir}, Tasks) ->
+    %% 先算好键（反馈数要读库，别在比较函数里反复读）；相同的按编号新在前，结果稳定
+    Keyed = [{sort_key(Field, T), T} || T <- Tasks],
+    Cmp = fun({Ka, A}, {Kb, B}) ->
+                  case Ka =:= Kb of
+                      true -> A#task.seq >= B#task.seq;
+                      false when Dir =:= asc -> Ka < Kb;
+                      false -> Ka > Kb
+                  end
+          end,
+    [T || {_, T} <- lists:sort(Cmp, Keyed)].
+
+sort_key(id, T) -> T#task.seq;
+sort_key(title, T) -> string:lowercase(T#task.title);
+sort_key(status, T) -> index_of(T#task.status, bosun_task_status:all());
+sort_key(priority, T) -> case T#task.priority of low -> 1; medium -> 2; high -> 3 end;
+%% 未领取的排在有人的后面（升序时）
+sort_key(assignee, #task{assignee = undefined}) -> {1, <<>>};
+sort_key(assignee, T) -> {0, string:lowercase(T#task.assignee)};
+sort_key(feedback, T) -> bosun_feedback:count(T#task.id);
+sort_key(updated, T) -> T#task.updated_at;
+sort_key(created, T) -> T#task.created_at.
+
+index_of(X, L) -> index_of(X, L, 1).
+index_of(_, [], N) -> N;
+index_of(X, [X | _], N) -> N;
+index_of(X, [_ | T], N) -> index_of(X, T, N + 1).
 
 %% 列表过滤的 kind：缺省不过滤（与建单时缺省 task 不同）
 parse_kind_filter(undefined) -> {ok, undefined};
@@ -412,11 +509,19 @@ parse_statuses(List) when is_list(List) ->
     end;
 parse_statuses(_) -> {error, {invalid, status, <<"expected a list of statuses">>}}.
 
-matches(T, #{status := Statuses, label := Label, kind := Kind, epic := Epic}) ->
+matches(T, #{status := Statuses, label := Label, kind := Kind, epic := Epic} = F) ->
+    Priorities = maps:get(priority, F, undefined),
+    Assignees = maps:get(assignee, F, undefined),
     (Statuses =:= undefined orelse lists:member(T#task.status, Statuses))
     andalso (Label =:= undefined orelse lists:member(Label, T#task.labels))
     andalso (Kind =:= undefined orelse kind_of(T) =:= Kind)
-    andalso (Epic =:= undefined orelse T#task.epic =:= Epic).
+    andalso (Epic =:= undefined orelse T#task.epic =:= Epic)
+    andalso (Priorities =:= undefined orelse lists:member(T#task.priority, Priorities))
+    andalso (Assignees =:= undefined orelse lists:member(T#task.assignee, Assignees))
+    %% 需要关注 = 被阻塞或最新一条有效反馈是提问；放最后，前面的条件先把范围缩小再读链 / 反馈
+    andalso (not maps:get(attention, F, false)
+             orelse bosun_link:blocked(T#task.id)
+             orelse bosun_json:open_question(bosun_feedback:read_dirty(T#task.id))).
 
 %% 关键字：BM25（标题 / 正文 / 标签 / feedback）命中按分数排前面，再补上
 %% 标题 / ID 子串命中（比如输入 "bos-1" 这种 ID 片段）；索引不可用时只走子串。

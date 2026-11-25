@@ -1,5 +1,6 @@
 import useSWR, { mutate } from 'swr';
 import { client, fetcher } from './client';
+import { refreshStats } from './stats';
 import type { LinkType, Priority, Status, Task, TaskFilter, TaskKind, TaskListResponse, TestEvidence } from './types';
 
 const taskKey = (id: string) => `/tasks/${id.toUpperCase()}`;
@@ -11,6 +12,10 @@ export const toQuery = (f: TaskFilter): string => {
   if (f.q) p.set('q', f.q);
   if (f.kind) p.set('kind', f.kind);
   if (f.epic) p.set('epic', f.epic);
+  if (f.priority?.length) p.set('priority', f.priority.join(','));
+  if (f.assignee?.length) p.set('assignee', f.assignee.join(','));
+  if (f.attention) p.set('attention', 'true');
+  if (f.sort) p.set('sort', f.sort);
   if (f.limit != null) p.set('limit', String(f.limit));
   if (f.offset != null) p.set('offset', String(f.offset));
   const s = p.toString();
@@ -33,6 +38,8 @@ const refreshLists = (projectKey: string) =>
 const applyTask = async (task: Task) => {
   await mutate(taskKey(task.id), task, false);
   await refreshLists(task.project_key);
+  // 统计卡片不用等一分钟的轮询；不 await，统计慢不拖住看板撤乐观状态
+  void refreshStats();
   await mutate(`/projects/${task.project_key}`);
   return task;
 };

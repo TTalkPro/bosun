@@ -45,6 +45,16 @@ describe('theme store', () => {
     expect(t.getThemeMode()).toBe('light');                   // 中途与系统一致过 = 回到跟随
   });
 
+  it('followSystem drops a pinned choice', async () => {
+    const t = await setup('dark', 'light');
+    expect(t.isFollowingSystem()).toBe(false);
+    expect(t.getThemeMode()).toBe('light');
+    act(() => t.followSystem());
+    expect(t.isFollowingSystem()).toBe(true);
+    expect(t.getThemeMode()).toBe('dark');
+    expect(localStorage.getItem('bosun.theme')).toBeNull();
+  });
+
   it('drops a stored value that merely mirrors the system', async () => {
     const t = await setup('light', 'light');                  // 旧版本首次加载自动写入的
     expect(localStorage.getItem('bosun.theme')).toBeNull();

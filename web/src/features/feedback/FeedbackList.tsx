@@ -45,7 +45,7 @@ const Header = ({ f, open, onEdit, dimmed }: { f: Feedback; open: boolean; onEdi
     </div>
     <div className="flex flex-wrap items-center gap-3">
       <span className="font-mono text-xs leading-none text-muted-foreground">{f.id}</span>
-      <RelativeTime value={f.created_at} className="leading-none" />
+      <RelativeTime value={f.created_at} className="text-xs leading-none text-muted-foreground" />
       {f.status === 'active' && f.author === me && onEdit && (
         <Button variant="ghost" size="sm" className="h-6 px-2 py-0" onClick={() => onEdit(f)}><Pencil />修订</Button>
       )}
@@ -89,6 +89,10 @@ const FeedbackCard = ({ f, open, onEdit }: { f: Feedback; open: boolean; onEdit?
     </CardContent>
   </Card>
 );
+
+/** 单条（作废的折叠成一行）；合并动态流里逐条渲染用 */
+export const FeedbackEntry = ({ f, open, onEdit }: { f: Feedback; open: boolean; onEdit?: (f: Feedback) => void }) =>
+  f.status === 'superseded' ? <SupersededCard f={f} /> : <FeedbackCard f={f} open={open} onEdit={onEdit} />;
 
 const FeedbackList = ({ feedback, onEdit }: { feedback: Feedback[]; onEdit?: (f: Feedback) => void }) => {
   if (!feedback.length) {

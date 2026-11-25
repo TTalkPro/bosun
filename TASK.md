@@ -77,3 +77,6 @@
 - [x] [bitcask 12.0.1 → 13.1.1](tasks/2026-11-24-bitcask-13-upgrade.md)：依赖改按 `git_subdir` 取 `apps/bitcask`（13.1.1 起干净环境才编得出 NIF）；代码不用改，既有索引直接可用
 - [x] [bitcask 13.1.1 → 13.1.2](tasks/2026-11-25-bitcask-13.1.2-upgrade.md)：PATCH，上游只升了内嵌的 libbitcask（库源码无变化）；代码不用改
 - [x] [审查：缺陷修复与优化](tasks/2026-11-19-audit-fixes.md)：key 轮换越权、导入跨组织写、序号回退覆盖、BQL 500、Epic 级联、前端提示全哑等；没动的建议也列在里面
+
+## 9. 前端 UI 优化（2026-11-25）
+- [x] [项目看板 + 拖拽 + 外壳样式](tasks/2026-11-25-ui-kanban-refresh.md)：参照 shadcnuikit dashboard；dnd-kit 拖拽（触屏 / 键盘）、拖到完成 / 拒绝等弹证据 / 说明面板、列折叠、看板 / 列表切换、列表列显隐与分页、项目列表页 / 详情页统计卡片与动态图（新接口 `/api/v1/stats`）、任务详情页 / BQL 查询页 / 账户页 / 组织页 / 数据导入导出页 / 登录注册页改版、侧栏与筛选条改版

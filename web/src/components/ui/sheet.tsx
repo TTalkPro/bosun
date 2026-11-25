@@ -45,9 +45,12 @@ function SheetContent({
   className,
   children,
   side = 'right',
+  showCloseButton = true,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: 'top' | 'right' | 'bottom' | 'left'
+  /** SidePanel 页眉里有自己的关闭按钮，不要再叠一个 */
+  showCloseButton?: boolean
 }) {
   return (
     <SheetPortal>
@@ -69,10 +72,10 @@ function SheetContent({
         {...props}
       >
         {children}
-        <SheetPrimitive.Close className='absolute inset-e-4 top-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary'>
+        {showCloseButton && <SheetPrimitive.Close className='absolute inset-e-4 top-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary'>
           <XIcon className='size-4' />
           <span className='sr-only'>Close</span>
-        </SheetPrimitive.Close>
+        </SheetPrimitive.Close>}
       </SheetPrimitive.Content>
     </SheetPortal>
   )

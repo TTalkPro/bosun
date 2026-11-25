@@ -7,7 +7,7 @@
 %%% 导入模式：replace（清空后写入）| merge（同 key 覆盖，计数器取大者）。
 %%%
 %%% 作用域（13）：有组织主体时只导出本组织的项目 / 任务 / 反馈 / 关联 / 筛选器 / 操作者，
-%%% 导入把项目 / 筛选器 / 操作者打上本组织（筛选器换新 id 免得撞别的组织），别的组织已占的
+%%% 导入把项目 / 筛选器 / 操作者打上本组织（筛选器的 id 规则见 place_filters/5），别的组织已占的
 %%% 项目 key 报 {conflict, key}；replace 只清本组织的数据；计数器只在系统作用域下导入。
 %%% 用户 / 会话 / API key / 组织本身不进导出。项目 / 筛选器 / 操作者的 `org_id' 会写进文件，
 %%% 但只有**系统作用域**（shell、`export_file' / `import_file'）导入时才采信——不然整库备份
@@ -119,7 +119,10 @@ filter_out(#filter{} = F) ->
 %% 导入
 %%====================================================================
 
-%% @doc Opts: #{mode => replace | merge}（缺省 merge）
+%% @doc Opts: #{mode => replace | merge（缺省 merge）, dry_run => boolean()}
+%%
+%% dry_run：整套检查与落点规则照常走完，在事务末尾回滚，返回将会发生什么（新增 / 覆盖 / 跳过 / 将删除的
+%% 条数，`detail'）而不写库、不重建索引、不消耗筛选器 id 计数器。出错时与正式导入同样返回错误。
 %%
 %% 文件内容不可信（组织管理员上传的任意 JSON），写库前先过三道：
 %%   1. 形状：字段类型不对直接拒绝（以前原样落库，之后列表 / 详情一读就 500）；
@@ -131,6 +134,7 @@ filter_out(#filter{} = F) ->
 -spec import(map(), map()) -> {ok, map()} | {error, term()}.
 import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1; V =:= 2 ->
     Mode = maps:get(mode, Opts, merge),
+    DryRun = maps:get(dry_run, Opts, false) =:= true,
     Org = bosun_scope:org_id(),
     try
         Projects = [(project_in(P))#project{org_id = org_in(P, Org)} || P <- list_in(<<"projects">>, Data)],
@@ -149,6 +153,16 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
                                  ++ [project_of(F#feedback.task_id) || F <- Fbs]
                                  ++ lists:append([[project_of(L#link.from), project_of(L#link.to)] || L <- Links])),
         Res = bosun_store:transaction(fun() ->
+            %% replace 会删掉的（删之前数）
+            Deleted = case Mode of
+                          replace -> scope_counts(Org);
+                          merge -> null
+                      end,
+            %% 本组织原有筛选器的 id：replace 删数据之前取（见 place_filters/5）
+            OwnFilterIds = case Org of
+                               undefined -> #{};
+                               _ -> maps:from_list([{F#filter.id, true} || F <- mnesia:index_read(filter, Org, #filter.org_id)])
+                           end,
             case {Mode, Org} of
                 {replace, undefined} ->
                     lists:foreach(fun(Tab) -> [mnesia:delete({Tab, K}) || K <- mnesia:all_keys(Tab)] end,
@@ -172,11 +186,10 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
                         end
                 end
             end, #{}, lists:usort(maps:keys(Imported) ++ Referenced)),
-            %% 组织作用域下筛选器换新 id（旧 id 可能是别的组织的）
-            Filters = case Org of
-                          undefined -> Filters0;
-                          _ -> [F#filter{id = <<"f", (integer_to_binary(bosun_store:next_id(filter)))/binary>>} || F <- Filters0]
-                      end,
+            {Filters, FiltersSkipped} = case Org of
+                                            undefined -> {Filters0, 0};
+                                            _ -> place_filters(Filters0, Org, OwnFilterIds, Mode, new_filter_id_fun(DryRun))
+                                        end,
             %% 操作者的名字是全局主键：别的组织已经登记的名字不动（不然等于把人家的操作者划过来）
             Actors1 = case Org of
                           undefined -> Actors;
@@ -207,19 +220,33 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
                           Old = case maps:get(Id, ExistingTasks, undefined) of undefined -> 0; #task{feedback_seq = S} -> S end,
                           Base#task{feedback_seq = lists:max([Base#task.feedback_seq, Old, maps:get(Id, MaxFbSeq, 0)])}
                       end || Id <- lists:usort(maps:keys(ImportedTasks) ++ maps:keys(MaxFbSeq))],
+            %% 预演用：写之前比一比库里已有什么（replace 时本组织的已经删了，都算新增）
+            Detail = #{<<"projects">> => new_updated([K || K <- maps:keys(Imported)], fun(K) -> maps:is_key(K, Existing) end),
+                       <<"tasks">> => new_updated(maps:keys(ImportedTasks), fun(Id) -> maps:is_key(Id, ExistingTasks) end),
+                       <<"feedback">> => new_updated([F#feedback.id || F <- Fbs], fun(Id) -> mnesia:read(feedback, Id) =/= [] end),
+                       <<"filters">> => (new_updated([F#filter.id || F <- Filters],
+                                                     fun(Id) -> Mode =:= merge andalso maps:is_key(Id, OwnFilterIds) end))#{<<"skipped">> => FiltersSkipped},
+                       <<"links">> => length(Links),
+                       <<"deleted">> => Deleted},
             lists:foreach(fun(R) -> ok = mnesia:write(R) end, Projects1 ++ Tasks1 ++ Fbs ++ Filters ++ Actors1 ++ Links),
             lists:foreach(fun({K, N}) ->
                 Cur = case mnesia:read(counter, K) of [#counter{value = C}] -> C; [] -> 0 end,
                 ok = mnesia:write(#counter{key = K, value = max(Cur, N)})
             end, Counters),
-            ok
+            case DryRun of
+                true -> bosun_store:abort({dry_run, Detail});
+                false -> {Filters, FiltersSkipped, Detail}
+            end
         end),
         case Res of
-            {ok, ok} ->
+            {error, {dry_run, PlanDetail}} ->
+                {ok, #{<<"mode">> => atom_to_binary(Mode, utf8), <<"dry_run">> => true, <<"detail">> => PlanDetail}};
+            {ok, {Filters, FiltersSkipped, Detail}} ->
                 _ = bosun_search:reindex(),
                 {ok, #{<<"mode">> => atom_to_binary(Mode, utf8),
                        <<"projects">> => length(Projects), <<"tasks">> => length(Tasks),
-                       <<"feedback">> => length(Fbs), <<"filters">> => length(Filters0)}};
+                       <<"feedback">> => length(Fbs), <<"filters">> => length(Filters),
+                       <<"filters_skipped">> => FiltersSkipped, <<"detail">> => Detail}};
             {error, _} = E -> E
         end
     catch
@@ -234,6 +261,56 @@ import(#{<<"version">> := V}, _) ->
     {error, {invalid, data, <<"unsupported export version ", (bosun_util:to_binary(V))/binary>>}};
 import(_, _) ->
     {error, {invalid, data, <<"not a bosun export file">>}}.
+
+%% 新筛选器的 id：正式导入从全局计数器取；预演不能取（计数器是脏写，回滚不了），给占位
+new_filter_id_fun(true) -> fun() -> <<"f?">> end;
+new_filter_id_fun(false) -> fun() -> <<"f", (integer_to_binary(bosun_store:next_id(filter)))/binary>> end.
+
+new_updated(Keys, Exists) ->
+    Updated = length([K || K <- Keys, Exists(K)]),
+    #{<<"new">> => length(Keys) - Updated, <<"updated">> => Updated}.
+
+%% 作用域里现有多少（replace 预演里的「将删除」）：组织作用域只数本组织的，系统作用域是全库
+scope_counts(undefined) ->
+    #{<<"projects">> => length(mnesia:all_keys(project)), <<"tasks">> => length(mnesia:all_keys(task)),
+      <<"feedback">> => length(mnesia:all_keys(feedback)), <<"filters">> => length(mnesia:all_keys(filter))};
+scope_counts(Org) ->
+    Keys = [P#project.key || P <- mnesia:index_read(project, Org, #project.org_id)],
+    TaskIds = lists:append([[T#task.id || T <- mnesia:index_read(task, K, #task.project_key)] || K <- Keys]),
+    #{<<"projects">> => length(Keys), <<"tasks">> => length(TaskIds),
+      <<"feedback">> => lists:sum([length(mnesia:index_read(feedback, Id, #feedback.task_id)) || Id <- TaskIds]),
+      <<"filters">> => length(mnesia:index_read(filter, Org, #filter.org_id))}.
+
+%% 组织作用域下筛选器的落点（返回 {要写的, 跳过的条数}）。筛选器 id 是全局计数器发的，
+%% 文件里的 id 可能属于别的组织、也可能来自别的实例，不能照搬：
+%%   1. id 是本组织原有的筛选器（replace 删之前就是）→ 沿用原 id 覆盖：同 ID 覆盖与项目 / 任务一致，
+%%      replace 往返后 `?filter=fN' 书签不失效；
+%%   2. 否则，本组织里已有同名同查询的（含本文件里排在前面的）→ 跳过：同一份导出合并两次不再多出一份；
+%%   3. 否则发新 id。
+place_filters(Fs, Org, OwnIds, Mode, NewId) ->
+    Overwritten = [F#filter.id || F <- Fs, maps:is_key(F#filter.id, OwnIds)],
+    %% replace 时本组织的筛选器已在本事务里删掉，不拿来比
+    Present = case Mode of
+                  replace -> [];
+                  merge -> [{F#filter.name, F#filter.query}
+                            || F <- mnesia:index_read(filter, Org, #filter.org_id),
+                               not lists:member(F#filter.id, Overwritten)]
+              end,
+    {Out, Skipped, _} =
+        lists:foldl(fun(F, {Acc, Skip, Seen}) ->
+                            Key = {F#filter.name, F#filter.query},
+                            case maps:is_key(F#filter.id, OwnIds) of
+                                true -> {[F | Acc], Skip, Seen#{Key => true}};
+                                false ->
+                                    case maps:is_key(Key, Seen) of
+                                        true -> {Acc, Skip + 1, Seen};
+                                        false ->
+                                            Id = NewId(),
+                                            {[F#filter{id = Id} | Acc], Skip, Seen#{Key => true}}
+                                    end
+                            end
+                    end, {[], 0, maps:from_list([{K, true} || K <- Present])}, Fs),
+    {lists:reverse(Out), Skipped}.
 
 %% [{Key, N}] → #{Key => 最大的 N}
 max_by(Pairs) ->

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_STATUSES, isForward, isTaskId, nextStatuses, normalizeId, transitionLabel } from '@/features/tasks/status';
-import { defaultKind } from '@/features/feedback/kinds';
+import { defaultKind, openQuestionOf } from '@/features/feedback/kinds';
 import type { Feedback } from '@/api/types';
 
 describe('status table (mirrors bosun_task_status:allowed/2)', () => {
@@ -51,5 +51,17 @@ describe('feedback default kind', () => {
     expect(defaultKind([fb('question'), fb('review')])).toBe('comment');
     // 作废的 question 不算
     expect(defaultKind([fb('comment'), fb('question', 'superseded')])).toBe('comment');
+  });
+});
+
+describe('open question', () => {
+  const fb = (id: string, kind: Feedback['kind'], status: Feedback['status'] = 'active') =>
+    ({ id, task_id: 'T-1', seq: 1, author: 'a', kind, content: '', created_at: '', supersedes: null, superseded_by: status === 'superseded' ? 'x' : null, status }) as Feedback;
+  it('is the latest active entry when it is a question', () => {
+    expect(openQuestionOf([fb('1', 'comment'), fb('2', 'question')])?.id).toBe('2');
+    expect(openQuestionOf([fb('1', 'question'), fb('2', 'answer')])).toBeUndefined();
+    // 作废的不算：最新有效的那条才看
+    expect(openQuestionOf([fb('1', 'question'), fb('2', 'comment', 'superseded')])?.id).toBe('1');
+    expect(openQuestionOf([])).toBeUndefined();
   });
 });

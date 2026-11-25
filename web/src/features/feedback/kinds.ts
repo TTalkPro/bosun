@@ -14,3 +14,10 @@ export const defaultKind = (feedback: Feedback[]): FeedbackKind => {
   const active = feedback.filter((f) => f.status !== 'superseded');
   return active.length && active[active.length - 1].kind === 'question' ? 'answer' : 'comment';
 };
+
+/** 「待回答」的那条：最新一条有效记录且是提问 */
+export const openQuestionOf = (feedback: Feedback[]): Feedback | undefined => {
+  const active = feedback.filter((f) => f.status !== 'superseded');
+  const last = active[active.length - 1];
+  return last?.kind === 'question' ? last : undefined;
+};

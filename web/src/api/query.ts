@@ -1,6 +1,6 @@
 import useSWR, { mutate } from 'swr';
 import { client, fetcher } from './client';
-import type { TaskSummary } from './types';
+import type { Priority, Status, TaskSummary } from './types';
 
 export interface SavedFilter {
   id: string;
@@ -10,9 +10,17 @@ export interface SavedFilter {
   updated_at: string;
 }
 
+/** 整个结果集（不只是这一页）的分布 */
+export interface QueryFacets {
+  by_status: Partial<Record<Status, number>>;
+  by_priority: Partial<Record<Priority, number>>;
+  by_project: Record<string, number>;
+}
+
 export interface QueryResult {
   tasks: TaskSummary[];
   total: number;
+  facets?: QueryFacets;
   order: { field: string; dir: 'asc' | 'desc' }[];
   filter?: SavedFilter;
 }

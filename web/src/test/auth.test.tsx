@@ -89,3 +89,62 @@ describe('LoginPage', () => {
     await waitFor(() => expect(screen.getByText('task page')).toBeInTheDocument());
   });
 });
+
+describe('LoginPage extras', () => {
+  beforeEach(() => {
+    mocks.useMe.mockReset(); mocks.login.mockReset(); localStorage.clear();
+    mocks.useMe.mockReturnValue({ data: undefined, error: new ApiError(401, undefined, 'x'), isLoading: false });
+  });
+
+  it('prefills a remembered email and forgets it when unchecked', async () => {
+    localStorage.setItem('bosun.login.email', 'alice@acme.io');
+    renderAt('/login');
+    expect((screen.getByLabelText('邮箱') as HTMLInputElement).value).toBe('alice@acme.io');
+    expect(screen.getByRole('checkbox')).toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(localStorage.getItem('bosun.login.email')).toBeNull();
+  });
+
+  it('remembers the email after a successful login when checked', async () => {
+    mocks.login.mockImplementation(async () => { mocks.useMe.mockReturnValue({ data: me, error: undefined, isLoading: false }); return { org: me.org, user: me.user }; });
+    renderAt('/login');
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'alice@acme.io' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } });
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+    await waitFor(() => expect(screen.getByText('projects page')).toBeInTheDocument());
+    expect(localStorage.getItem('bosun.login.email')).toBe('alice@acme.io');
+  });
+
+  it('counts down after being rate limited', async () => {
+    mocks.login.mockRejectedValue(new ApiError(429, { error: 'too_many_requests', message: 'slow down', detail: { retry_after: 30 } }, 'x'));
+    renderAt('/login');
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'alice@acme.io' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+    const btn = await screen.findByRole('button', { name: '30 秒后可再试' });
+    expect(btn).toBeDisabled();
+    expect(screen.getByText('尝试次数太多，请 30 秒后再试')).toBeInTheDocument();
+  });
+
+  it('shows long lockouts as minutes:seconds', async () => {
+    mocks.login.mockRejectedValue(new ApiError(429, { error: 'too_many_requests', message: 'slow down', detail: { retry_after: 895 } }, 'x'));
+    renderAt('/login');
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'alice@acme.io' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+    expect(await screen.findByRole('button', { name: '14:55 后可再试' })).toBeDisabled();
+  });
+
+  it('explains why you are here and warns about caps lock', () => {
+    renderAt('/login?next=%2Ftasks%2FBOS-1');
+    expect(screen.getByText('/tasks/BOS-1')).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByLabelText('密码'), { key: 'A', modifierCapsLock: true });
+    expect(screen.getByText('大写锁定已打开')).toBeInTheDocument();
+  });
+
+  it('confirms a sign-out', () => {
+    renderAt('/login?signedout=1');
+    expect(screen.getByText('已退出登录')).toBeInTheDocument();
+  });
+});

@@ -19,7 +19,7 @@
 6. Milkdown 编辑器，GitHub 风格 Markdown 渲染，Mermaid 图
 7. 全文检索：标题 / 正文 / 标签 / Feedback，中英文，跨项目
 8. [BQL](docs/BQL.md)（JQL 风格）跨项目查询 + 可保存的筛选器
-9. 整库 JSON 导出 / 导入（`/data` 页或 `scripts/export.sh` `scripts/import.sh`）
+9. 按组织的 JSON 导出 / 导入（`/data` 页或 `scripts/export.sh` `scripts/import.sh`，见下文「备份与迁移」）
 
 ## 运行
 
@@ -99,7 +99,21 @@ docker compose down                 # 数据在卷里，不会丢
 
 在 FreeBSD 上构建：`pkg install erlang rebar3 cmake icu node22 npm-node22 && npm i -g pnpm`；bitcask 的 NIF 是 C++23，用系统 clang（FreeBSD 14+）；release 自带 ERTS，必须在目标 OS / 架构上 `scripts/build-release.sh`。未在真机上验证过，遇到问题看 `/var/log/bosun/bosun.log`。
 
-`bin/export.sh` / `bin/import.sh` 随 release 一起打包。节点名固定 `-sname bosun`（`config/prod.vm.args`）；与本机开发节点同时跑会冲突，改 `releases/<vsn>/vm.args` 即可。
+`bin/export.sh` / `bin/import.sh` 随 release 一起打包（用法见下文「备份与迁移」）。节点名固定 `-sname bosun`（`config/prod.vm.args`）；与本机开发节点同时跑会冲突，改 `releases/<vsn>/vm.args` 即可。
+
+### 备份与迁移
+
+`/data` 页（管理员）可以下载 / 导入 JSON；命令行用 `scripts/export.sh` / `scripts/import.sh`（release 里是 `bin/…`）。两个脚本都要组织管理员的 API key，放在环境变量 `BOSUN_API_KEY` 里（脚本经标准输入交给 curl，不出现在命令行上）：
+
+```bash
+export BOSUN_API_KEY=bsk_…                                        # 「账户 → API Key」里建；导入要勾 manage 权限
+scripts/export.sh backup.json [http://127.0.0.1:5000]             # 导出 key 所属组织的数据
+scripts/import.sh backup.json [merge|replace] [http://127.0.0.1:5000]
+```
+
+- 导出范围是 key 所属的组织（与 `/data` 页相同）；用户、会话、API key、组织本身不导出。导出先写临时文件，失败不会覆盖已有的同名文件。
+- `merge`（缺省）同 ID 覆盖、其余保留；`replace` 先清空本组织的项目 / 任务 / Feedback / 筛选器再写入。整个导入是一个事务。
+- 失败时打印 HTTP 状态和服务端的错误信息并以非 0 退出：401 = key 无效 / 已撤销 / 过期；403 = 不是管理员，或导入时 key 没有 manage 权限。
 
 ## 接入 Claude Code（MCP）
 

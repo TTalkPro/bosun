@@ -34,6 +34,7 @@ dispatch() ->
             {"/api/v1/tasks/:id/feedback",       bosun_web_feedback_h, #{}},
             {"/api/v1/tasks/:id/feedback/:seq",  bosun_web_feedback_h, #{}},
             {"/api/v1/search",                   bosun_web_search_h,   #{}},
+            {"/api/v1/stats",                    bosun_web_stats_h,    #{}},
             {"/api/v1/actors",                   bosun_web_actors_h,   #{}},
             {"/api/v1/workflow.md",              bosun_web_workflow_h, Public},
             {"/api/v1/query",                    bosun_web_query_h,    #{mode => query}},

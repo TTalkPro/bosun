@@ -16,12 +16,15 @@ interface Props {
   editing?: Feedback;
   onClose: () => void;
   onSaved?: (f: Feedback) => void;
+  /** 从内联输入框「Markdown 编辑器…」带过来的草稿 */
+  initialContent?: string;
+  initialKind?: FeedbackKind;
 }
 
 // 新增 / 修订 Feedback：右侧 2/3 面板，编辑器撑满
-const FeedbackDialog = ({ taskId, feedback, editing, onClose, onSaved }: Props) => {
-  const [kind, setKind] = useState<FeedbackKind>(editing?.kind ?? defaultKind(feedback));
-  const [content, setContent] = useState(editing?.content ?? '');
+const FeedbackDialog = ({ taskId, feedback, editing, onClose, onSaved, initialContent, initialKind }: Props) => {
+  const [kind, setKind] = useState<FeedbackKind>(editing?.kind ?? initialKind ?? defaultKind(feedback));
+  const [content, setContent] = useState(editing?.content ?? initialContent ?? '');
   const [busy, setBusy] = useState(false);
   const { enqueueSnackbar } = useSnackbar();
   const handleError = useApiError();
@@ -66,7 +69,7 @@ const FeedbackDialog = ({ taskId, feedback, editing, onClose, onSaved }: Props) 
       }
     >
       <div className="min-h-0 flex-1">
-        <MarkdownEditor value={editing?.content ?? ''} onChange={setContent} minHeight={200} fill autoFocus placeholder="写下说明、评审意见、问题或回答…支持 Markdown 与 mermaid" />
+        <MarkdownEditor value={editing?.content ?? initialContent ?? ''} onChange={setContent} minHeight={200} fill autoFocus placeholder="写下说明、评审意见、问题或回答…支持 Markdown 与 mermaid" />
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
         {editing ? '修订会追加一条新的 Feedback，原条目标记为作废并保留在线索里；没有删除。' : 'Feedback 只追加不删除；自己写的条目可以修订（生成新版本，旧版本作废）。'}

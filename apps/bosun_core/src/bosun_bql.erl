@@ -89,6 +89,8 @@ query(Bin, Opts) ->
                 Page = lists:sublist(Sorted, Offset + 1, Limit),
                 {ok, #{<<"tasks">> => [bosun_json:task_summary(T, feedback_of(T, Ctx)) || T <- Page],
                        <<"total">> => length(Matched),
+                       %% 整个结果集（不只是这一页）的分布：查询页的结果概览用
+                       <<"facets">> => facets(Matched),
                        <<"order">> => [#{<<"field">> => atom_to_binary(F, utf8), <<"dir">> => atom_to_binary(D, utf8)}
                                        || {F, D} <- effective_order(Order, Ctx)]}}
             catch
@@ -470,6 +472,14 @@ open_question(T, Ctx) ->
 %%====================================================================
 %% 排序
 %%====================================================================
+
+facets(Tasks) ->
+    Count = fun(KeyFun) ->
+                    lists:foldl(fun(T, M) -> maps:update_with(KeyFun(T), fun(N) -> N + 1 end, 1, M) end, #{}, Tasks)
+            end,
+    #{<<"by_status">> => maps:from_list([{bosun_task_status:to_binary(S), N} || {S, N} <- maps:to_list(Count(fun(T) -> T#task.status end))]),
+      <<"by_priority">> => maps:from_list([{atom_to_binary(P, utf8), N} || {P, N} <- maps:to_list(Count(fun(T) -> T#task.priority end))]),
+      <<"by_project">> => Count(fun(T) -> T#task.project_key end)}.
 
 effective_order([], #{searches := S}) when map_size(S) > 0 -> [{score, desc}];
 effective_order([], _) -> [{updated, desc}];

@@ -13,7 +13,7 @@ interface Props {
 
 const SidePanel = ({ title, headerExtra, actions, onClose, busy, modal, children }: Props) => (
   <Sheet open onOpenChange={(next) => !busy && !next && onClose()}>
-    <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-[66.67vw]"
+    <SheetContent side="right" showCloseButton={false} className="flex w-full flex-col gap-0 p-0 sm:max-w-[66.67vw]"
       onInteractOutside={modal ? (e) => e.preventDefault() : undefined}
       onEscapeKeyDown={modal ? (e) => e.preventDefault() : undefined}>
       <SheetTitle className="sr-only">{typeof title === 'string' ? title : '编辑'}</SheetTitle>

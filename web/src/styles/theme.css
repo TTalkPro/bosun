@@ -24,12 +24,17 @@
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
 
-  --sidebar: var(--background);
+  /* 图表分类色（dataviz 参考调色板 1、2 号位，已对卡片面校验 CVD / 对比度；暗色是同色相的暗色档，不是自动反转） */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+
+  /* 侧栏比内容区略灰一档（shadcn sidebar 的做法），选中项再深一档 */
+  --sidebar: oklch(0.985 0.003 247.86);
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-accent: oklch(0.945 0.01 255);
+  --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
   --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
 }
@@ -58,7 +63,29 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --sidebar: oklch(0.155 0.04 264);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.25 0.04 262);
+  --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
 }
+
+/* 主题色（hooks/use-accent）：只换 primary 一族；缺省蓝色不写 data-accent。
+   暗色用 .dark[data-accent=…]（同一个 <html> 上，优先级高于 .dark） */
+[data-accent='violet'] { --primary: oklch(0.54 0.22 293); --primary-foreground: oklch(0.98 0.01 293); }
+[data-accent='green'] { --primary: oklch(0.55 0.15 160); --primary-foreground: oklch(0.98 0.02 160); }
+[data-accent='orange'] { --primary: oklch(0.6 0.19 45); --primary-foreground: oklch(0.99 0.01 45); }
+[data-accent='rose'] { --primary: oklch(0.58 0.21 15); --primary-foreground: oklch(0.99 0.01 15); }
+.dark[data-accent='violet'] { --primary: oklch(0.7 0.17 293); --primary-foreground: oklch(0.15 0.03 293); }
+.dark[data-accent='green'] { --primary: oklch(0.72 0.15 160); --primary-foreground: oklch(0.15 0.03 160); }
+.dark[data-accent='orange'] { --primary: oklch(0.74 0.16 50); --primary-foreground: oklch(0.16 0.03 50); }
+.dark[data-accent='rose'] { --primary: oklch(0.71 0.17 15); --primary-foreground: oklch(0.15 0.03 15); }
 
 @theme inline {
   --font-inter: 'Inter', 'sans-serif';
@@ -91,6 +118,8 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);

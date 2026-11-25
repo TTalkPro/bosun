@@ -5,13 +5,14 @@ import { useSnackbar } from '@/components/notify';
 import { removeLink } from '@/api/tasks';
 import type { Task, TaskLink } from '@/api/types';
 import ConfirmDialog from '@/components/ConfirmDialog';
-import StatusChip from '@/components/StatusChip';
+import Section from '@/components/Section';
 import { useApiError } from '@/components/useApiError';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { paths } from '@/routes/paths';
+import { StatusIcon } from '@/features/tasks/StatusIcon';
+import { STATUS_LABEL } from '@/features/tasks/status';
 import LinkPanel from './LinkPanel';
 import { LINK_TYPE_LABEL } from './linkTypes';
 
@@ -58,20 +59,19 @@ const LinksCard = ({ task, onChanged }: Props) => {
   };
 
   return (
-    <Card className="gap-3 p-4 py-4">
-      <div className="flex items-center">
-        <h3 className="text-base font-semibold">关联 <span className="text-xs text-muted-foreground">({task.links.length})</span></h3>
-        <div className="flex-1" />
-        <Button size="sm" onClick={() => setAdding(true)}><Link2 />添加</Button>
-      </div>
-      {task.links.length === 0 && <p className="text-xs text-muted-foreground/70">没有关联。依赖：对方没做完不能开始；替代：对方由本任务接手。</p>}
+    <Section
+      title="关联"
+      count={task.links.length}
+      action={<Button size="sm" variant="outline" className="h-7" onClick={() => setAdding(true)}><Link2 />添加</Button>}
+    >
+      {task.links.length === 0 && <p className="text-xs text-muted-foreground">没有关联。依赖：对方没做完不能开始；替代：对方由本任务接手。</p>}
       <div className="space-y-3">
         {GROUPS.map((g) => {
           const items = task.links.filter(g.match);
           if (!items.length) return null;
           return (
             <div key={g.key}>
-              <p className="text-xs font-semibold text-muted-foreground">{g.title}</p>
+              <p className="text-xs font-medium text-muted-foreground">{g.title}</p>
               <div className="mt-1.5 space-y-1.5">
                 {items.map((l) => (
                   <div key={`${l.type}-${l.direction}-${l.task}`} className="group flex min-w-0 items-center gap-2">
@@ -81,9 +81,11 @@ const LinksCard = ({ task, onChanged }: Props) => {
                         <TooltipContent>未完成，阻塞本任务开始</TooltipContent>
                       </Tooltip>
                     )}
-                    <Badge variant="outline" className="cursor-pointer font-mono font-bold" onClick={() => navigate(paths.task(l.task))}>{l.task}</Badge>
+                    <Badge variant="outline" className="shrink-0 cursor-pointer font-mono text-xs" onClick={() => navigate(paths.task(l.task))}>{l.task}</Badge>
                     <button type="button" className="min-w-0 flex-1 truncate text-left text-sm" onClick={() => navigate(paths.task(l.task))}>{l.title ?? '（已不存在）'}</button>
-                    {l.status && <StatusChip status={l.status} />}
+                    {l.status && (
+                      <Tooltip><TooltipTrigger asChild><span className="shrink-0"><StatusIcon status={l.status} /></span></TooltipTrigger><TooltipContent>{STATUS_LABEL[l.status]}</TooltipContent></Tooltip>
+                    )}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button variant="ghost" size="icon" className="size-7 opacity-0 transition group-hover:opacity-100" onClick={() => setRemoving(l)} aria-label="删除关联"><X className="size-4" /></Button>
@@ -106,7 +108,7 @@ const LinksCard = ({ task, onChanged }: Props) => {
         onClose={() => setRemoving(null)}
         onConfirm={doRemove}
       />
-    </Card>
+    </Section>
   );
 };
 

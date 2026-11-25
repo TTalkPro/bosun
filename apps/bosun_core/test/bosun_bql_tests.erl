@@ -57,6 +57,11 @@ query() ->
     {ok, _} = bosun_task:update(<<"BQ-3">>, #{<<"epic">> => <<"OT-2">>}),
     ok = bosun_search:sync(),
     Ids = fun(Q) -> {ok, #{<<"tasks">> := Ts}} = bosun_bql:query(Q, #{}), [maps:get(<<"id">>, T) || T <- Ts] end,
+    %% 分布按整个结果集算，不受分页影响
+    {ok, #{<<"tasks">> := [_], <<"total">> := 5, <<"facets">> := Facets}} = bosun_bql:query(<<>>, #{<<"limit">> => 1}),
+    ?assertEqual(#{<<"NEW">> => 4, <<"DONE">> => 1}, maps:get(<<"by_status">>, Facets)),
+    ?assertEqual(#{<<"high">> => 1, <<"medium">> => 3, <<"low">> => 1}, maps:get(<<"by_priority">>, Facets)),
+    ?assertEqual(#{<<"BQ">> => 3, <<"OT">> => 2}, maps:get(<<"by_project">>, Facets)),
     %% kind / epic
     ?assertEqual([<<"OT-2">>], Ids(<<"kind = epic">>)),
     ?assertEqual([<<"BQ-3">>], Ids(<<"epic = ot-2">>)),

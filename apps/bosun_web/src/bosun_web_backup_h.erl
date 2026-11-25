@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% @doc GET /api/v1/export（下载 JSON） · POST /api/v1/import?mode=replace|merge
+%%% @doc GET /api/v1/export（下载 JSON） · POST /api/v1/import?mode=replace|merge[&dry_run=true]
 %%%-------------------------------------------------------------------
 -module(bosun_web_backup_h).
 
@@ -24,11 +24,16 @@ init(Req0, #{mode := export} = State) ->
 init(Req0, #{mode := import} = State) ->
     Req = case cowboy_req:method(Req0) of
               <<"POST">> ->
-                  Mode = case maps:get(<<"mode">>, query_map(Req0), <<"merge">>) of
+                  Q = query_map(Req0),
+                  Mode = case maps:get(<<"mode">>, Q, <<"merge">>) of
                              <<"replace">> -> replace;
                              _ -> merge
                          end,
-                  with_body(Req0, ?MAX_IMPORT, fun(Body, Req1) -> reply_result(200, bosun_backup:import(Body, #{mode => Mode}), Req1) end);
+                  %% dry_run=true：预演，不写库（/data 页导入前的预览）
+                  DryRun = bosun_util:to_bool(maps:get(<<"dry_run">>, Q, false), false),
+                  with_body(Req0, ?MAX_IMPORT, fun(Body, Req1) ->
+                      reply_result(200, bosun_backup:import(Body, #{mode => Mode, dry_run => DryRun}), Req1)
+                  end);
               _ -> method_not_allowed(Req0, <<"POST">>)
           end,
     {ok, Req, State}.

@@ -21,11 +21,13 @@ interface Props {
   onCreated?: (t: Task) => void;
   /** 从 Epic 页新建步骤：预选所属 Epic */
   defaultEpic?: string;
+  /** 看板快速添加里「更多选项…」带过来的标题 */
+  defaultTitle?: string;
 }
 
 // 新建任务：右侧 2/3 面板，描述编辑器撑满剩余高度
-const TaskFormDialog = ({ open, onClose, projectKey, onCreated, defaultEpic }: Props) => {
-  const [title, setTitle] = useState('');
+const TaskFormDialog = ({ open, onClose, projectKey, onCreated, defaultEpic, defaultTitle }: Props) => {
+  const [title, setTitle] = useState(defaultTitle ?? '');
   const [kind, setKind] = useState<TaskKind>('task');
   const [epic, setEpic] = useState<string>(defaultEpic ?? '');
   const { data: epics } = useEpics(projectKey);
