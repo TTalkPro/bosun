@@ -26,6 +26,11 @@ create(Key0, Input) when is_map(Input) ->
                     Res = bosun_store:transaction(fun() ->
                         bosun_scope:project_visible(Key) orelse bosun_store:abort(not_found),
                         Epic = epic_in_tx(Kind, maps:get(<<"epic">>, Input, undefined)),
+                        %% 没指定 milestone 的 Epic 步骤：跟 Epic 进同一个（Epic 的已发布就不跟）
+                        {Milestone, MsWhy} = case maps:find(<<"milestone">>, Input) of
+                                                 {ok, MV} -> {bosun_milestone:resolve_in_tx(Key, MV), undefined};
+                                                 error -> {epic_milestone_in_tx(Epic), <<"跟随 Epic "/utf8, (bin_or_empty(Epic))/binary>>}
+                                             end,
                         Seq = bosun_project:next_task_seq_in_tx(Key),
                         Now = bosun_util:now_ms(),
                         Id = bosun_id:task_id(Key, Seq),
@@ -40,7 +45,11 @@ create(Key0, Input) when is_map(Input) ->
                                                  <<>> -> undefined;
                                                  A -> A
                                              end,
-                                  kind = Kind, epic = Epic},
+                                  kind = Kind, epic = Epic, milestone = Milestone,
+                                  milestone_log = case Milestone of
+                                                      undefined -> [];
+                                                      _ -> [bosun_milestone:log_entry(undefined, Milestone, Actor, Now, MsWhy)]
+                                                  end},
                         %% 导入的旧数据可能让 task_seq 落后于已有任务：撞号就报错，绝不覆盖
                         mnesia:read(task, Id, write) =:= [] orelse bosun_store:abort({conflict, id}),
                         ok = mnesia:write(T),
@@ -73,7 +82,8 @@ get(TaskId0) ->
     end.
 
 %% @doc 项目内任务摘要列表。
-%% Filter（binary 键）: status（列表或逗号串）、label、q、kind（task | epic）、epic（Epic id）、limit、offset
+%% Filter（binary 键）: status（列表或逗号串）、label、q、kind（task | epic）、epic（Epic id）、
+%% milestone（id / 名称 / active / backlog = 未排期）、limit、offset
 %% 返回 #{<<"tasks">> => [摘要], <<"total">> => 过滤后总数}
 -spec list(term(), map()) -> {ok, map()} | {error, term()}.
 list(Key0, Filter) when is_map(Filter) ->
@@ -83,8 +93,9 @@ list(Key0, Filter) when is_map(Filter) ->
             case bosun_scope:project_visible(Key) of
                 false -> {error, {project, not_found}};
                 true ->
-                    case parse_filter(Filter) of
-                        {ok, F} ->
+                    case {parse_filter(Filter), bosun_milestone:resolve_filter(Key, maps:get(<<"milestone">>, Filter, undefined))} of
+                        {{ok, F0}, {ok, MF}} ->
+                            F = F0#{milestone => MF},
                             All = mnesia:dirty_index_read(task, Key, #task.project_key),
                             Sorted = lists:sort(fun(A, B) -> A#task.seq >= B#task.seq end, All),
                             Candidates = with_query(Key, Sorted, maps:get(q, F)),
@@ -94,12 +105,14 @@ list(Key0, Filter) when is_map(Filter) ->
                             Summaries = [bosun_json:task_summary(T, bosun_feedback:read_dirty(T#task.id))
                                          || T <- Page],
                             {ok, #{<<"tasks">> => Summaries, <<"total">> => Total}};
-                        {error, _} = E -> E
+                        {{error, _} = E, _} -> E;
+                        {_, {error, _} = E} -> E
                     end
             end
     end.
 
-%% @doc 修改 title / description / priority / labels / assignee / epic。status 被忽略（走 transition），
+%% @doc 修改 title / description / priority / labels / assignee / epic / milestone（"" = 移出；
+%% 可带 milestone_comment 记进变更记录）。status 被忽略（走 transition），
 %% kind 建单后不可改。
 -spec update(term(), map()) -> {ok, map()} | {error, term()}.
 update(TaskId0, Input) when is_map(Input) ->
@@ -115,7 +128,8 @@ update(TaskId0, Input) when is_map(Input) ->
                     [T0] ->
                         T1 = apply_updates(T0, Input),
                         Now = bosun_util:now_ms(),
-                        T2 = T1#task{updated_at = Now},
+                        T2 = milestone_changed_in_tx(T0, T1#task{updated_at = Now}, Actor, Now,
+                                                     bosun_util:get_opt_bin(<<"milestone_comment">>, Input)),
                         ok = mnesia:write(T2),
                         %% 换了 / 摘了 Epic：两边的 Epic 都要重新推导状态（旧的可能就此完成，新的可能被重开）
                         Touched = case T0#task.epic =:= T2#task.epic of
@@ -324,6 +338,40 @@ epic_in_tx(Kind, V) when is_binary(V) ->
     end;
 epic_in_tx(_Kind, _) -> bosun_store:abort({invalid, epic, <<"expected a task id like BOS-12">>}).
 
+%% Epic 的 milestone（步骤建单时继承用）；没有 Epic、Epic 没排期或已发布 → undefined
+epic_milestone_in_tx(undefined) -> undefined;
+epic_milestone_in_tx(EpicId) ->
+    case mnesia:read(task, EpicId) of
+        [#task{milestone = M}] when M =/= undefined ->
+            case mnesia:read(milestone, M) of
+                [#milestone{status = released}] -> undefined;
+                _ -> M
+            end;
+        _ -> undefined
+    end.
+
+%% 归属变了：记一条变更；Epic 的话，原来跟它在同一个 milestone（含都没排期）、还没做完的步骤一起挪
+milestone_changed_in_tx(#task{milestone = Same}, #task{milestone = Same} = T, _Actor, _Now, _Comment) -> T;
+milestone_changed_in_tx(#task{milestone = Old}, #task{milestone = New} = T, Actor, Now, Comment) ->
+    case kind_of(T) of
+        epic ->
+            Why = <<"跟随 Epic "/utf8, (T#task.id)/binary>>,
+            lists:foreach(fun(#task{milestone = M, status = S} = K) when M =:= Old, (S =:= new orelse S =:= in_progress) ->
+                                  ok = mnesia:write(K#task{milestone = New, updated_at = Now,
+                                                           milestone_log = log0(K#task.milestone_log)
+                                                               ++ [bosun_milestone:log_entry(Old, New, Actor, Now, Why)]});
+                             (_) -> ok
+                          end, mnesia:index_read(task, T#task.id, #task.epic));
+        task -> ok
+    end,
+    T#task{milestone_log = log0(T#task.milestone_log) ++ [bosun_milestone:log_entry(Old, New, Actor, Now, Comment)]}.
+
+log0(undefined) -> [];
+log0(L) -> L.
+
+bin_or_empty(undefined) -> <<>>;
+bin_or_empty(B) -> B.
+
 parse_priority(undefined) -> {ok, medium};
 parse_priority(null) -> {ok, medium};
 parse_priority(<<>>) -> {ok, medium};
@@ -356,6 +404,7 @@ apply_updates(T, Input) ->
                 <<>> -> Acc#task{assignee = undefined};
                 A -> Acc#task{assignee = A}
             end;
+        (<<"milestone">>, V, Acc) -> Acc#task{milestone = bosun_milestone:resolve_in_tx(Acc#task.project_key, V)};
         (<<"epic">>, V, Acc) ->
             case epic_in_tx(kind_of(Acc), V) of
                 Same when Same =:= Acc#task.id -> bosun_store:abort({invalid, epic, <<"a task cannot belong to itself">>});
@@ -518,10 +567,16 @@ matches(T, #{status := Statuses, label := Label, kind := Kind, epic := Epic} = F
     andalso (Epic =:= undefined orelse T#task.epic =:= Epic)
     andalso (Priorities =:= undefined orelse lists:member(T#task.priority, Priorities))
     andalso (Assignees =:= undefined orelse lists:member(T#task.assignee, Assignees))
+    andalso milestone_matches(maps:get(milestone, F, undefined), T#task.milestone)
     %% 需要关注 = 被阻塞或最新一条有效反馈是提问；放最后，前面的条件先把范围缩小再读链 / 反馈
     andalso (not maps:get(attention, F, false)
              orelse bosun_link:blocked(T#task.id)
              orelse bosun_json:open_question(bosun_feedback:read_dirty(T#task.id))).
+
+milestone_matches(undefined, _) -> true;
+milestone_matches(backlog, M) -> M =:= undefined;
+milestone_matches(nothing, _) -> false;
+milestone_matches({id, Id}, M) -> M =:= Id.
 
 %% 关键字：BM25（标题 / 正文 / 标签 / feedback）命中按分数排前面，再补上
 %% 标题 / ID 子串命中（比如输入 "bos-1" 这种 ID 片段）；索引不可用时只走子串。

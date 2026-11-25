@@ -7,9 +7,10 @@
 -include_lib("stdlib/include/assert.hrl").
 
 -export([all/0, init_per_suite/1, end_per_suite/1, init_per_testcase/2, end_per_testcase/2]).
--export([rest_chain/1, rest_errors/1, static_fallback/1, mcp_end_to_end/1, auth_flow/1, org_isolation/1, rate_limits/1]).
+-export([rest_chain/1, rest_errors/1, static_fallback/1, mcp_end_to_end/1, auth_flow/1, org_isolation/1, rate_limits/1,
+         milestones/1]).
 
-all() -> [rest_chain, rest_errors, static_fallback, mcp_end_to_end, auth_flow, org_isolation, rate_limits].
+all() -> [rest_chain, rest_errors, static_fallback, mcp_end_to_end, auth_flow, org_isolation, rate_limits, milestones].
 
 init_per_suite(Config) ->
     %% 同一 VM 里先跑过 eunit（bosun_test_env）会留下独立的 bosun_search / bosun_identity，
@@ -220,7 +221,7 @@ mcp_end_to_end(Config) ->
 
     {200, _, ListBody} = mcp_post(Url, S, rpc(2, <<"tools/list">>, #{})),
     #{<<"result">> := #{<<"tools">> := Tools}} = json:decode(ListBody),
-    ?assertEqual(22, length(Tools)),
+    ?assertEqual(28, length(Tools)),
     ?assert(lists:member(<<"transition_task">>, [maps:get(<<"name">>, T) || T <- Tools])),
 
     %% 还没 identify 也已经知道是谁的 key
@@ -492,6 +493,79 @@ login(Base, Email, Password) ->
                              bosun_json:encode(#{<<"email">> => Email, <<"password">> => Password})},
                       [], [{body_format, binary}]),
     [{base, Base}, {cookie, cookie_value(H)}].
+
+%% Milestone（14）：REST 链路、错误映射、批量归属、key scope、组织隔离
+milestones(Config) ->
+    Base = ?config(base, Config),
+    {201, _} = req(post, Config, "/api/v1/projects", #{<<"key">> => <<"REL">>, <<"name">> => <<"Release">>}),
+    {201, #{<<"id">> := M1, <<"status">> := <<"planning">>, <<"created_by">> := <<"Alice">>}} =
+        req(post, Config, "/api/v1/projects/REL/milestones", #{<<"name">> => <<"0.1.4">>, <<"target_date">> => <<"2026-12-31">>}),
+    ?assertEqual(<<"REL-M1">>, M1),
+    {201, #{<<"id">> := M2}} = req(post, Config, "/api/v1/projects/REL/milestones", #{<<"name">> => <<"0.2">>}),
+    {409, #{<<"error">> := <<"conflict">>, <<"field">> := <<"name">>}} =
+        req(post, Config, "/api/v1/projects/REL/milestones", #{<<"name">> => <<"0.2">>}),
+    {400, #{<<"field">> := <<"target_date">>}} =
+        req(post, Config, "/api/v1/projects/REL/milestones", #{<<"name">> => <<"x">>, <<"target_date">> => <<"soon">>}),
+    {404, _} = req(post, Config, "/api/v1/projects/NOPE/milestones", #{<<"name">> => <<"x">>}),
+
+    {201, #{<<"id">> := T1, <<"milestone">> := M1, <<"milestone_name">> := <<"0.1.4">>}} =
+        req(post, Config, "/api/v1/projects/REL/tasks", #{<<"title">> => <<"a">>, <<"milestone">> => <<"0.1.4">>}),
+    {201, #{<<"id">> := T2, <<"milestone">> := null}} = req(post, Config, "/api/v1/projects/REL/tasks", #{<<"title">> => <<"b">>}),
+    {200, #{<<"total">> := 1}} = req(get, Config, "/api/v1/projects/REL/tasks?milestone=backlog"),
+    {200, #{<<"total">> := 1}} = req(get, Config, "/api/v1/projects/REL/tasks?milestone=rel-m1"),
+    {400, #{<<"field">> := <<"milestone">>}} = req(get, Config, "/api/v1/projects/REL/tasks?milestone=9.9"),
+
+    %% 状态：一个进行中
+    {200, #{<<"status">> := <<"active">>}} = req(post, Config, "/api/v1/milestones/REL-M1/activate", #{}),
+    {409, #{<<"error">> := <<"active_exists">>, <<"detail">> := #{<<"milestone">> := M1}}} =
+        req(post, Config, "/api/v1/milestones/REL-M2/activate", #{}),
+    {409, #{<<"error">> := <<"invalid_state">>}} = req(post, Config, "/api/v1/milestones/REL-M2/release", #{}),
+    {404, _} = req(post, Config, "/api/v1/milestones/REL-M1/explode", #{}),
+    {200, #{<<"total">> := 1}} = req(get, Config, "/api/v1/projects/REL/tasks?milestone=active"),
+
+    %% 批量归属（带变更说明）
+    {200, #{<<"updated">> := [T2], <<"failed">> := [#{<<"id">> := <<"REL-99">>}]}} =
+        req(post, Config, "/api/v1/projects/REL/tasks/milestone", #{<<"ids">> => [T2, <<"REL-99">>], <<"milestone">> => M1}),
+    {200, #{<<"milestone_log">> := [_, #{<<"from">> := M1, <<"to">> := M2, <<"comment">> := <<"next time">>}]}} =
+        req(patch, Config, "/api/v1/tasks/" ++ binary_to_list(T1), #{<<"milestone">> => M2, <<"milestone_comment">> => <<"next time">>}),
+    {200, #{<<"counts">> := #{<<"scope">> := 1}, <<"changes">> := Changes}} = req(get, Config, "/api/v1/milestones/REL-M1"),
+    %% 同一毫秒里的移入 / 移出先后不定，只比条数
+    ?assertEqual([<<"in">>, <<"in">>, <<"out">>], lists:sort([maps:get(<<"direction">>, C) || C <- Changes])),
+    {200, #{<<"milestones">> := [#{<<"id">> := M1}, #{<<"id">> := M2}]}} = req(get, Config, "/api/v1/projects/REL/milestones"),
+
+    %% 发布：未完成的结转到 0.2
+    {200, #{<<"status">> := <<"released">>, <<"summary">> := #{<<"carried_over">> := [T2], <<"carried_to">> := M2}}} =
+        req(post, Config, "/api/v1/milestones/REL-M1/release", #{<<"carry_over">> => M2, <<"notes">> => <<"- a">>}),
+    {200, #{<<"milestone">> := M2}} = req(get, Config, "/api/v1/tasks/" ++ binary_to_list(T2)),
+    {400, #{<<"field">> := <<"milestone">>}} =
+        req(patch, Config, "/api/v1/tasks/" ++ binary_to_list(T2), #{<<"milestone">> => M1}),
+
+    %% 改 / 删
+    {200, #{<<"name">> := <<"0.2.0">>}} = req(patch, Config, "/api/v1/milestones/REL-M2", #{<<"name">> => <<"0.2.0">>}),
+    {409, #{<<"error">> := <<"not_empty">>}} = req(delete, Config, "/api/v1/milestones/REL-M2"),
+    {201, #{<<"id">> := M3}} = req(post, Config, "/api/v1/projects/REL/milestones", #{<<"name">> => <<"tmp">>}),
+    {200, #{<<"deleted">> := M3}} = req(delete, Config, "/api/v1/milestones/" ++ binary_to_list(M3)),
+    {404, _} = req(get, Config, "/api/v1/milestones/" ++ binary_to_list(M3)),
+
+    %% BQL
+    {200, #{<<"total">> := 2}} = req(get, Config, "/api/v1/query?q=" ++ uri_string:quote("milestone = \"0.2.0\"")),
+
+    %% key scope：write 能批量归属，不能建 / 发布 milestone（manage）
+    {201, #{<<"key">> := Key}} = req(post, Config, "/api/v1/keys", #{<<"name">> => <<"writer">>, <<"scopes">> => [<<"read">>, <<"write">>]}),
+    W = [{base, Base}, {auth, {"authorization", "Bearer " ++ binary_to_list(Key)}}],
+    {200, #{<<"updated">> := [T1]}} = req(post, W, "/api/v1/projects/REL/tasks/milestone", #{<<"ids">> => [T1], <<"milestone">> => <<>>}),
+    {403, #{<<"error">> := <<"forbidden_scope">>}} = req(post, W, "/api/v1/projects/REL/milestones", #{<<"name">> => <<"x">>}),
+    {403, #{<<"error">> := <<"forbidden_scope">>}} = req(post, W, "/api/v1/milestones/REL-M2/activate", #{}),
+    {200, #{<<"milestones">> := [_, _]}} = req(get, W, "/api/v1/projects/REL/milestones"),
+
+    %% 别的组织看不到
+    {Beta, _, _} = register_org(Base, <<"Beta">>, <<"root@beta.io">>, <<"Root">>),
+    B = [{base, Base}, {cookie, Beta}],
+    {404, _} = req(get, B, "/api/v1/projects/REL/milestones"),
+    {404, _} = req(get, B, "/api/v1/milestones/REL-M1"),
+    {404, _} = req(post, B, "/api/v1/milestones/REL-M2/activate", #{}),
+    {404, _} = req(post, B, "/api/v1/projects/REL/tasks/milestone", #{<<"ids">> => [T1], <<"milestone">> => <<>>}),
+    ok.
 
 cookie_value(Headers) ->
     "bosun_session=" ++ Rest = proplists:get_value("set-cookie", Headers),

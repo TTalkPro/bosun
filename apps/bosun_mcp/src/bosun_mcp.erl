@@ -18,6 +18,7 @@ tools() ->
     [scoped(T) || T <- bosun_mcp_identity_tools:tools()
                        ++ bosun_mcp_project_tools:tools()
                        ++ bosun_mcp_task_tools:tools()
+                       ++ bosun_mcp_milestone_tools:tools()
                        ++ bosun_mcp_feedback_tools:tools()
                        ++ bosun_mcp_query_tools:tools()].
 
@@ -72,6 +73,13 @@ authorize_tool(Name, P) ->
         <<"transition_task">> -> <<"write">>;
         <<"link_tasks">> -> <<"write">>;
         <<"unlink_tasks">> -> <<"write">>;
+        %% milestone（14）：看 = read；把任务排进 / 移出 = 任务协作（write）；milestone 本身 = manage
+        <<"list_milestones">> -> <<"read">>;
+        <<"get_milestone">> -> <<"read">>;
+        <<"assign_milestone">> -> <<"write">>;
+        <<"create_milestone">> -> <<"manage">>;
+        <<"update_milestone">> -> <<"manage">>;
+        <<"transition_milestone">> -> <<"manage">>;
         <<"add_feedback">> -> <<"write">>;
         <<"update_feedback">> -> <<"write">>;
         <<"list_feedback">> -> <<"read">>;
@@ -137,6 +145,7 @@ prompts0() ->
                  {ok, Task} ->
                      {ok, Doc} = bosun_workflow:doc(en),
                      Text = <<"You are working on the following Bosun task.\n\n",
+                              (milestone_hint(Task))/binary,
                               "```json\n", (bosun_json:encode(Task))/binary, "\n```\n\n",
                               Doc/binary,
                               "\nStart by moving the task to IN_PROGRESS, then do the work.">>,
@@ -145,6 +154,30 @@ prompts0() ->
                  {error, R} -> {error, error_to_text(R)}
              end
          end)].
+
+%% 提示词里一句话交代任务在哪次发布里：在当前进行中的就照常做；不在的话提醒先看当前 milestone
+milestone_hint(#{<<"project_key">> := Key} = Task) ->
+    Active = case bosun_milestone:active(Key) of
+                 {ok, A} -> A;
+                 none -> undefined
+             end,
+    case {maps:get(<<"milestone">>, Task, undefined), Active} of
+        {M, M} when M =/= undefined ->
+            <<"It belongs to the active milestone ", (name(M))/binary, " (the current release).\n\n">>;
+        {undefined, undefined} -> <<>>;
+        {undefined, _} ->
+            <<"It is not scheduled in any milestone; the current release is ", (name(Active))/binary,
+              ". Prefer tasks of the active milestone unless you were asked to do this one.\n\n">>;
+        {M, _} ->
+            <<"It belongs to milestone ", (name(M))/binary, ", which is not the active one.\n\n">>
+    end;
+milestone_hint(_) -> <<>>.
+
+name(Id) ->
+    case bosun_milestone:name_of(Id) of
+        undefined -> Id;
+        N -> <<N/binary, " (", Id/binary, ")">>
+    end.
 
 -spec server_info() -> map().
 server_info() ->
@@ -203,6 +236,19 @@ error_to_text({cycle, Path}) ->
     <<"dependency cycle: ", (iolist_to_binary(lists:join(<<" -> ">>, Path)))/binary>>;
 error_to_text(search_unavailable) ->
     <<"search index is not available; use list_tasks with query instead">>;
+error_to_text({conflict, active_exists, Other}) ->
+    <<"the project already has an active milestone (", Other/binary,
+      "); release or pause it first (transition_milestone), or put the tasks into that one">>;
+error_to_text({milestone_state, Status, Action}) ->
+    <<"cannot ", (atom_to_binary(Action, utf8))/binary, " a ", (atom_to_binary(Status, utf8))/binary,
+      " milestone; activate: planning -> active, pause: active -> planning, release: active -> released, reopen: released -> active">>;
+error_to_text(not_empty) ->
+    <<"the milestone still has tasks; move them out (assign_milestone with milestone=\"\") before deleting">>;
+error_to_text({conflict, name}) ->
+    <<"a milestone with this name already exists in the project; use list_milestones">>;
+error_to_text({invalid, milestone, Why}) ->
+    <<"invalid milestone: ", (bosun_util:to_binary(Why))/binary,
+      "; list_milestones shows the planning / active ones you can use (or pass \"\" for the backlog)">>;
 error_to_text({conflict, key}) ->
     <<"project key already exists; pick another key or use get_project">>;
 error_to_text({invalid, Field, Why}) ->

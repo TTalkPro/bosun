@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link as RouterLink, useNavigate, useParams } from 'react-router';
-import { Check, ChevronLeft, ChevronRight, CircleHelp, Columns3, Copy, Flag, GitCommitVertical, Link2, List, MessageSquareText, MoreHorizontal, Pencil, Plus, X } from 'lucide-react';
+import { Milestone as MilestoneIcon, ChevronLeft, ChevronRight, CircleHelp, Columns3, Copy, Flag, GitCommitVertical, Link2, List, MessageSquareText, MoreHorizontal, Pencil, Plus, X } from 'lucide-react';
 import { useSnackbar } from '@/components/notify';
 import { isApiError } from '@/api/client';
 import { createTask, updateTask, useEpics, useTask } from '@/api/tasks';
@@ -17,6 +17,11 @@ import EpicProgressBar from '@/components/EpicProgressBar';
 import KanbanBoard from '@/features/board/KanbanBoard';
 import TaskTable from '@/features/tasks/TaskTable';
 import TaskFormDialog from '@/features/tasks/TaskFormDialog';
+import { useMilestones } from '@/api/milestones';
+import { useMilestoneCtx } from '@/features/milestones/context';
+import MilestoneMoveProvider from '@/features/milestones/MilestoneMoveProvider';
+import MilestoneSelect from '@/features/milestones/MilestoneSelect';
+import { AttentionBanners, DeliveryCard, StatusStepper } from '@/features/tasks/TaskInsights';
 import LinksCard from '@/features/links/LinksCard';
 import BlockedChip from '@/components/BlockedChip';
 import { useApiError } from '@/components/useApiError';
@@ -173,6 +178,14 @@ const TaskDetail = ({ taskId }: { taskId: string }) => {
     el?.focus({ preventScroll: true });
   };
   const openQuestion = task.open_question;
+  // 「去回答」：把提问滚到视野中间、闪一下，再把光标放进下面的输入框
+  const answer = (feedbackId: string) => {
+    const el = [...document.querySelectorAll<HTMLElement>(`[id="fb-${feedbackId}"]`)].find((x) => x.offsetParent !== null);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el?.animate([{ boxShadow: '0 0 0 3px rgb(245 158 11 / .6)' }, { boxShadow: '0 0 0 3px transparent' }], { duration: 1600 });
+    const box = [...document.querySelectorAll<HTMLTextAreaElement>('textarea[aria-label="写 Feedback"]')].find((x) => x.offsetParent !== null);
+    box?.focus({ preventScroll: true });
+  };
 
   return (
     <div className="space-y-6">
@@ -202,6 +215,12 @@ const TaskDetail = ({ taskId }: { taskId: string }) => {
               {isEpic && <Badge variant="secondary" className="h-6"><Flag />Epic</Badge>}
               <span className="inline-flex h-6 items-center gap-1.5 rounded-md border bg-background px-2 text-xs font-medium"><StatusIcon status={task.status} className="size-3.5" />{STATUS_LABEL[task.status]}</span>
               <span className="inline-flex h-6 items-center gap-1 rounded-md border bg-background px-2 text-xs font-medium"><PriorityIcon priority={task.priority} />{PRIORITY_LABEL[task.priority]}优先级</span>
+              {task.milestone_name && task.milestone && (
+                <RouterLink to={`${paths.project(task.project_key)}?view=board&m=${task.milestone}`}
+                  className="inline-flex h-6 items-center gap-1 rounded-md border bg-background px-2 text-xs font-medium hover:bg-accent">
+                  <MilestoneIcon className="size-3.5 text-muted-foreground" />{task.milestone_name}
+                </RouterLink>
+              )}
               {task.blocked && <BlockedChip links={task.links} />}
               {openQuestion && <span className="inline-flex h-6 items-center gap-1 rounded-md bg-amber-500/15 px-2 text-xs font-semibold text-amber-700 dark:text-amber-400"><CircleHelp className="size-3.5" />有提问待回答</span>}
             </div>
@@ -229,8 +248,11 @@ const TaskDetail = ({ taskId }: { taskId: string }) => {
         </div>
       </div>
 
+      <AttentionBanners task={task} onAnswer={answer} />
+
       <div className="grid gap-6 lg:grid-cols-12">
         <div className="min-w-0 space-y-6 lg:col-span-8">
+          <StatusStepper task={task} />
           <Description task={task} onSave={(description) => patch({ description })} />
 
           {isEpic && (
@@ -305,7 +327,7 @@ const TaskDetail = ({ taskId }: { taskId: string }) => {
                 <Button size="sm" variant="outline" className="h-7" onClick={focusComposer}><MessageSquareText />写 Feedback</Button>
               </div>
               <TabsContent value="all" className="p-5 pl-6">
-                <ActivityFeed history={task.history} feedback={task.feedback} onEditFeedback={(f) => setFeedbackDialog(f)} footer={composer} />
+                <ActivityFeed history={task.history} feedback={task.feedback} milestoneLog={task.milestone_log} onEditFeedback={(f) => setFeedbackDialog(f)} footer={composer} />
               </TabsContent>
               <TabsContent value="feedback" className="space-y-4 p-5">
                 <FeedbackList feedback={task.feedback} onEdit={(f) => setFeedbackDialog(f)} />
@@ -355,6 +377,9 @@ const TaskDetail = ({ taskId }: { taskId: string }) => {
                   </Select>
                 </PropRow>
               )}
+              <PropRow label="Milestone" htmlFor="task-milestone">
+                <TaskMilestoneSelect task={task} />
+              </PropRow>
               {isEpic && progress && (
                 <PropRow label="进度">
                   <div className="flex w-full items-center gap-2">
@@ -388,17 +413,7 @@ const TaskDetail = ({ taskId }: { taskId: string }) => {
 
           <LinksCard task={task} onChanged={(t) => mutate(t, false)} />
 
-          {task.commits.length > 0 && (
-            <Section title="提交" count={task.commits.length} bodyClassName="space-y-1.5 py-4">
-              {task.commits.map((c) => (
-                <div key={c} className="flex items-center gap-2 text-sm">
-                  <GitCommitVertical className="size-4 shrink-0 text-muted-foreground" />
-                  <code className="min-w-0 flex-1 truncate font-mono text-xs" title={c}>{c}</code>
-                  <CopyButton value={c} />
-                </div>
-              ))}
-            </Section>
-          )}
+          <DeliveryCard task={task} />
         </div>
       </div>
 
@@ -457,6 +472,20 @@ const TaskNav = ({ task, last }: { task: Task; last?: number }) => {
 };
 
 // 详情卡片里的一行属性：左边固定宽度的名称，右边值（可编辑控件直接放进来）
+// 详情卡片里的 Milestone：从待规划排进来直接改，移出 / 换 milestone 先问原因（MilestoneMoveProvider 里的对话框）
+const TaskMilestoneSelect = ({ task }: { task: Task }) => {
+  const { data } = useMilestones(task.project_key);
+  return (
+    <MilestoneMoveProvider projectKey={task.project_key} milestones={data?.milestones ?? []}>
+      <MilestoneMoveSelect task={task} />
+    </MilestoneMoveProvider>
+  );
+};
+const MilestoneMoveSelect = ({ task }: { task: Task }) => {
+  const ctx = useMilestoneCtx();
+  return <MilestoneSelect ghost id="task-milestone" projectKey={task.project_key} value={task.milestone} onChange={(id) => ctx?.requestMove([task], id)} />;
+};
+
 const PropRow = ({ label, htmlFor, align = 'center', children }: { label: string; htmlFor?: string; align?: 'center' | 'start'; children: ReactNode }) => (
   <div className={cn('flex gap-3 px-5 py-2.5', align === 'center' ? 'items-center' : 'items-start')}>
     <dt className={cn('w-16 shrink-0 text-muted-foreground', align === 'start' && 'pt-0.5')}>
@@ -465,17 +494,5 @@ const PropRow = ({ label, htmlFor, align = 'center', children }: { label: string
     <dd className="flex min-w-0 flex-1 items-center">{children}</dd>
   </div>
 );
-
-const CopyButton = ({ value }: { value: string }) => {
-  const [copied, setCopied] = useState(false);
-  return (
-    <Tooltip><TooltipTrigger asChild>
-      <Button variant="ghost" size="icon" className="size-6 text-muted-foreground" aria-label="复制提交 hash"
-        onClick={async () => { try { await navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1200); } catch { /* ignore */ } }}>
-        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-      </Button>
-    </TooltipTrigger><TooltipContent>{copied ? '已复制' : '复制'}</TooltipContent></Tooltip>
-  );
-};
 
 export default TaskDetailPage;

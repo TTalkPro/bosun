@@ -11,6 +11,7 @@ export const FIELD_INFO: Record<string, string> = {
   depends_on: '依赖', blocks: '被依赖', replaces: '替代', replaced_by: '被替代',
   title: '标题', description: '描述', text: '全文', feedback: '只搜反馈', created: '创建时间', updated: '更新时间',
   question: '有提问待回答', feedback_count: '反馈数',
+  milestone: 'Milestone（名称 / active）', fixversion: 'Milestone', milestone_status: 'Milestone 状态',
 };
 
 export type CompletionCtx =

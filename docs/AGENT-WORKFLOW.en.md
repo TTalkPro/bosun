@@ -84,6 +84,17 @@ When a goal splits into several steps, create an epic first (`create_task(kind="
 - **Replacement** `link_tasks(from=A, to=B, type="replaces")`: A takes over B. If B is still NEW / IN_PROGRESS it is cancelled automatically with `replaced by A` in its history - so "same need, different approach" is a new task plus a replaces link, not a manual cancel.
 - Links can be removed (`unlink_tasks`); removing never changes a status. BQL: `blocked = true`, `depends_on = KEY-N`, `blocks = KEY-N`, `replaces = KEY-N`, `replaced_by = KEY-N`.
 
+## 4d. Milestones (release scopes)
+
+A release is planned as a milestone (e.g. `0.1.4`) holding a set of tasks. Each project has **at most one active** milestone - that is the current release. A release may contain several epics and several standalone tasks.
+
+- **Finding work**: `list_milestones(project_key)` shows the active one; `list_tasks(project_key, milestone="active")` lists its tasks. Unless you were assigned something specific, prefer tasks of the active milestone; the `work_on_task` prompt also says whether a task is in the current release.
+- **Scheduling**: `create_task(..., milestone="0.1.4")` (id, name or `"active"`), or `update_task(id, milestone=...)`; several at once with `assign_milestone(project_key, task_ids, milestone)`. Without one, a task stays in the backlog. Epics can be scheduled too: their unfinished steps follow them, and a new step without a milestone joins its epic's.
+- **Say why when moving out**: when something will not make this release, `update_task(id, milestone="0.2", milestone_comment="not in this release")` (or `assign_milestone(..., comment=...)`). Every move in / out is recorded in the task's `milestone_log`; `get_milestone` lists the release's `changes`.
+- **Rules**: a released milestone cannot receive tasks (moving out is fine). Progress = done (DONE + VERIFIED) / scope (excluding epics, REJECTED and CANCELLED).
+- **Release** (needs `manage`): `transition_milestone(id, "release", carry_over="0.2", notes="...")`. NEW / IN_PROGRESS tasks move to `carry_over` (another milestone, or `"backlog"`); DONE-but-not-verified tasks stay and count as delivered, to be verified as usual. Other actions: `activate`, `pause` (back to planning), `reopen` (a released one).
+- BQL: `milestone = "0.1.4"`, `milestone = active`, `milestone IS EMPTY` (backlog), `milestone_status = released`.
+
 ## 5. Feedback
 
 Four kinds:

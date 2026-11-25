@@ -12,12 +12,13 @@
 
 -define(TABLES, [
     {project,    record_info(fields, project),    [org_id]},
-    {task,       record_info(fields, task),       [project_key, epic]},
+    {task,       record_info(fields, task),       [project_key, epic, milestone]},
     {feedback,   record_info(fields, feedback),   [task_id]},
     {filter,     record_info(fields, filter),     [org_id]},
     {counter,    record_info(fields, counter),    []},
     {actor,      record_info(fields, actor),      [org_id]},
     {link,       record_info(fields, link),       [from, to]},
+    {milestone,  record_info(fields, milestone),  [project_key]},
     %% 组织 / 用户 / 认证（13）
     {org,        record_info(fields, org),        []},
     {user,       record_info(fields, user),       [org_id, email]},

@@ -90,6 +90,17 @@ error_to_http({forbidden, Author}) ->
 error_to_http({superseded, By}) ->
     {409, #{<<"error">> => <<"superseded">>, <<"message">> => <<"already revised; edit ", By/binary, " instead">>,
             <<"detail">> => #{<<"superseded_by">> => By}}};
+error_to_http({conflict, active_exists, Other}) ->
+    {409, #{<<"error">> => <<"active_exists">>,
+            <<"message">> => <<"the project already has an active milestone (", Other/binary, "); pause or release it first">>,
+            <<"detail">> => #{<<"milestone">> => Other}}};
+error_to_http({milestone_state, Status, Action}) ->
+    {409, #{<<"error">> => <<"invalid_state">>,
+            <<"message">> => <<"cannot ", (atom_to_binary(Action, utf8))/binary, " a ",
+                               (atom_to_binary(Status, utf8))/binary, " milestone">>,
+            <<"detail">> => #{<<"status">> => atom_to_binary(Status, utf8), <<"action">> => atom_to_binary(Action, utf8)}}};
+error_to_http(not_empty) ->
+    {409, #{<<"error">> => <<"not_empty">>, <<"message">> => <<"the milestone still has tasks; move them out first">>}};
 error_to_http({conflict, Field}) ->
     {409, #{<<"error">> => <<"conflict">>, <<"field">> => bosun_util:to_binary(Field),
             <<"message">> => <<(bosun_util:to_binary(Field))/binary, " already exists">>}};

@@ -53,6 +53,7 @@ project_to_map(#project{} = P) ->
       <<"task_count">> => P#project.task_seq,
       <<"archived">> => P#project.archived,
       <<"org_id">> => P#project.org_id,
+      <<"active_milestone">> => bosun_milestone:brief_active(P#project.key),
       <<"created_at">> => iso8601(P#project.created_at),
       <<"updated_at">> => iso8601(P#project.updated_at)}.
 
@@ -74,6 +75,8 @@ task_summary(#task{} = T, Feedbacks) ->
       <<"commits">> => commits(T#task.history),
       <<"kind">> => atom_to_binary(bosun_task:kind_of(T), utf8),
       <<"epic">> => T#task.epic,
+      <<"milestone">> => T#task.milestone,
+      <<"milestone_name">> => bosun_milestone:name_of(T#task.milestone),
       <<"progress">> => case bosun_task:kind_of(T) of
                             epic -> bosun_task:progress(T#task.id);
                             task -> undefined
@@ -91,7 +94,11 @@ task_full(#task{} = T, Feedbacks) ->
     Base = Summary#{<<"description">> => T#task.description,
                     <<"history">> => [history_entry(H) || H <- T#task.history],
                     <<"feedback">> => [feedback_to_map(F) || F <- Feedbacks],
-                    <<"links">> => bosun_link:links_json(T#task.id)},
+                    <<"links">> => bosun_link:links_json(T#task.id),
+                    <<"milestone_log">> => [milestone_log_entry(E) || E <- case T#task.milestone_log of
+                                                                             undefined -> [];
+                                                                             L -> L
+                                                                         end]},
     case bosun_task:kind_of(T) of
         epic ->
             Base#{<<"children">> => [task_summary(K, bosun_feedback:read_dirty(K#task.id)) || K <- bosun_task:children(T#task.id)]};
@@ -104,6 +111,11 @@ task_full(#task{} = T, Feedbacks) ->
                                                     end
                                       end}
     end.
+
+milestone_log_entry(#{from := From, to := To, actor := Actor, at := At} = E) ->
+    #{<<"from">> => From, <<"from_name">> => bosun_milestone:name_of(From),
+      <<"to">> => To, <<"to_name">> => bosun_milestone:name_of(To),
+      <<"actor">> => Actor, <<"comment">> => maps:get(comment, E, undefined), <<"at">> => iso8601(At)}.
 
 -spec history_entry(map()) -> map().
 history_entry(#{to := To, actor := Actor, at := At} = H) ->

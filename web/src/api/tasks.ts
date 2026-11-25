@@ -15,6 +15,7 @@ export const toQuery = (f: TaskFilter): string => {
   if (f.priority?.length) p.set('priority', f.priority.join(','));
   if (f.assignee?.length) p.set('assignee', f.assignee.join(','));
   if (f.attention) p.set('attention', 'true');
+  if (f.milestone) p.set('milestone', f.milestone);
   if (f.sort) p.set('sort', f.sort);
   if (f.limit != null) p.set('limit', String(f.limit));
   if (f.offset != null) p.set('offset', String(f.offset));
@@ -41,6 +42,8 @@ const applyTask = async (task: Task) => {
   // 统计卡片不用等一分钟的轮询；不 await，统计慢不拖住看板撤乐观状态
   void refreshStats();
   await mutate(`/projects/${task.project_key}`);
+  // milestone 的计数 / 范围变更跟着任务变
+  void mutate((k) => typeof k === 'string' && (k.startsWith('/milestones/') || k.startsWith(`/projects/${task.project_key}/milestones`)));
   return task;
 };
 
@@ -53,6 +56,10 @@ export interface TaskInput {
   kind?: TaskKind;
   /** 所属 Epic id；更新时 "" 表示摘掉 */
   epic?: string;
+  /** 所属 milestone（id / 名称）；"" = 移出 */
+  milestone?: string;
+  /** 归属变更的说明，记进 milestone_log */
+  milestone_comment?: string;
 }
 
 // 当前项目的 Epic 列表（挂 Epic 的下拉用）

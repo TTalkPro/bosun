@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import FormField from '@/components/FormField';
 import { STATUS_LABEL, transitionLabel } from '@/features/tasks/status';
 import { cn } from '@/lib/utils';
 
@@ -74,37 +75,30 @@ const CompletePanel = ({ task, to, onClose, onChanged }: Props) => {
               : '你是执行方：自己验收必须记录通过的测试结果，否则后端会拒绝。'}
           </div>
         )}
-        <div>
-          <Label htmlFor="complete-commits">提交 hash</Label>
+        <FormField label="提交 hash" htmlFor="complete-commits" hint={to === 'DONE' ? '空格或逗号分隔；没有提交就留空，并在 Feedback 里说明' : '可选'}>
           <Input id="complete-commits" value={commits} onChange={(e) => setCommits(e.target.value)} autoFocus className="font-mono" />
-          <p className="mt-1 text-xs text-muted-foreground">
-            {to === 'DONE' ? '空格或逗号分隔；没有提交就留空，并在 Feedback 里说明' : '可选'}
-          </p>
-        </div>
+        </FormField>
         <div className="flex items-center gap-2">
           <Checkbox id="complete-with-tests" checked={withTests} onCheckedChange={(v) => setWithTests(!!v)} />
           <Label htmlFor="complete-with-tests">记录测试结果</Label>
         </div>
         {withTests && (
           <div className="space-y-3 border-l-2 pl-4">
-            <div>
-              <Label htmlFor="complete-command">命令</Label>
+            <FormField label="命令" htmlFor="complete-command">
               <Input id="complete-command" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="rebar3 eunit && rebar3 ct" className="font-mono" />
-            </div>
+            </FormField>
             <div className="flex items-center gap-2">
               <Checkbox id="complete-passed" checked={passed} onCheckedChange={(v) => setPassed(!!v)} />
               <Label htmlFor="complete-passed">全部通过</Label>
             </div>
-            <div>
-              <Label htmlFor="complete-summary">结果摘要</Label>
+            <FormField label="结果摘要" htmlFor="complete-summary">
               <Input id="complete-summary" value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="28 eunit + 4 ct passed" />
-            </div>
+            </FormField>
           </div>
         )}
-        <div>
-          <Label htmlFor="complete-comment">历史备注（可选）</Label>
+        <FormField label="历史备注（可选）" htmlFor="complete-comment">
           <Input id="complete-comment" value={comment} onChange={(e) => setComment(e.target.value)} />
-        </div>
+        </FormField>
         <p className="text-xs text-muted-foreground">
           提交 hash 与测试结果会进入状态历史，作为完成证据；提出方或第三方验收不需要测试记录。
         </p>

@@ -60,6 +60,8 @@ op     := = | != | ~ | !~ | > | >= | < | <=
 | `created` `updated` | `> >= < <=` | 日期，见下 |
 | `question`（`open_question`） | `= !=` | `true` = 最新一条有效反馈是未回答的 `question` |
 | `feedback_count` | `= != > >= < <=` | 有效反馈条数（被修订作废的旧版本不算），与任务列表 / 详情里显示的 `feedback_count` 同口径 |
+| `milestone`（`fixversion`） | `= != IN NOT IN IS EMPTY` | 所属 milestone：写名称（`"0.1.4"`）或 id（`BOS-M3`），不分大小写；`milestone = active` = 任务所在项目当前进行中的那个；`IS EMPTY` = 待规划。名称按任务所在项目解析，跨项目时匹配各项目里同名的 |
+| `milestone_status` | `= != IN NOT IN` | 所属 milestone 的状态：`planning` `active` `released`；没排期的任务对 `=` 都不匹配 |
 
 字段写错或运算符组合不支持，解析期直接报错（见「错误」）。
 
@@ -71,7 +73,7 @@ op     := = | != | ~ | !~ | > | >= | < | <=
 | `~` `!~` | 匹配 / 不匹配：`text` `feedback` 上是 BM25 全文，`title` `description` `id` `labels` `created_by` `assignee` 上是**子串**匹配（不分大小写） |
 | `> >= < <=` | 只用于 `priority` `created` `updated` `feedback_count` |
 | `IN (a, b)` / `NOT IN (a, b)` | 列表成员；值逗号分隔，可混用裸词与引号串 |
-| `IS EMPTY` / `IS NOT EMPTY` | 只用于 `labels` `assignee` `epic` `description` `feedback` 及四个关联字段 |
+| `IS EMPTY` / `IS NOT EMPTY` | 只用于 `labels` `assignee` `epic` `milestone` `description` `feedback` 及四个关联字段 |
 
 多个 `text ~` 条件各自独立跑一次检索再求交（AND）——`text ~ "mcp" AND text ~ "创建"` 要求两个词都命中，与 `text ~ "mcp 创建"` 分词后的效果类似但更严格。
 

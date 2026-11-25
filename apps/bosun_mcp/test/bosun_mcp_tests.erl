@@ -16,6 +16,7 @@ mcp_test_() ->
         {"query & filters", fun query_and_filters/0},
         {"epics", fun epics/0},
         {"links", fun links/0},
+        {"milestones", fun milestones/0},
         {"session identity", fun session_identity/0},
         {"bound user & org scope", fun bound_user_scope/0},
         {"key scopes & actor binding", fun key_scopes_and_actor/0},
@@ -39,6 +40,8 @@ catalog() ->
                   <<"list_projects">>, <<"get_project">>, <<"create_project">>, <<"update_project">>,
                   <<"list_tasks">>, <<"search_tasks">>, <<"get_task">>, <<"create_task">>, <<"update_task">>, <<"transition_task">>,
                   <<"link_tasks">>, <<"unlink_tasks">>,
+                  <<"list_milestones">>, <<"get_milestone">>, <<"create_milestone">>, <<"update_milestone">>,
+                  <<"transition_milestone">>, <<"assign_milestone">>,
                   <<"add_feedback">>, <<"update_feedback">>, <<"list_feedback">>,
                   <<"query_tasks">>, <<"list_filters">>, <<"save_filter">>, <<"delete_filter">>], Names),
     lists:foreach(fun(T) -> _ = bosun_json:encode(beamai_mcp_types:tool_to_map(T)) end, bosun_mcp:tools()),
@@ -354,3 +357,55 @@ links() ->
     {error, E3} = call(<<"unlink_tasks">>, #{<<"from">> => <<"LK-2">>, <<"to">> => <<"LK-1">>, <<"type">> => <<"depends_on">>}),
     ?assertMatch(<<"not found", _/binary>>, E3),
     {ok, #{<<"tasks">> := [#{<<"id">> := <<"LK-2">>}]}} = call(<<"query_tasks">>, #{<<"bql">> => <<"replaces = LK-3">>}).
+
+milestones() ->
+    {ok, _} = call(<<"create_project">>, #{<<"key">> => <<"MS">>, <<"name">> => <<"m">>}),
+    {ok, #{<<"id">> := <<"MS-M1">>, <<"status">> := <<"planning">>}} =
+        call(<<"create_milestone">>, #{<<"project_key">> => <<"MS">>, <<"name">> => <<"0.1">>, <<"target_date">> => <<"2026-12-31">>}),
+    {ok, #{<<"id">> := <<"MS-M2">>}} = call(<<"create_milestone">>, #{<<"project_key">> => <<"MS">>, <<"name">> => <<"0.2">>}),
+    {error, Dup} = call(<<"create_milestone">>, #{<<"project_key">> => <<"MS">>, <<"name">> => <<"0.2">>}),
+    ?assertMatch(<<"a milestone with this name already exists", _/binary>>, Dup),
+    %% 建单直接排进去（按名称）；不给就在待规划
+    {ok, #{<<"id">> := <<"MS-1">>, <<"milestone">> := <<"MS-M1">>, <<"milestone_name">> := <<"0.1">>}} =
+        call(<<"create_task">>, #{<<"project_key">> => <<"MS">>, <<"title">> => <<"a">>, <<"milestone">> => <<"0.1">>}),
+    {ok, #{<<"milestone">> := null}} = call(<<"create_task">>, #{<<"project_key">> => <<"MS">>, <<"title">> => <<"b">>}),
+    {ok, #{<<"id">> := <<"MS-3">>}} = call(<<"create_task">>, #{<<"project_key">> => <<"MS">>, <<"title">> => <<"c">>}),
+    %% 没有进行中时 active 不能用；开始后就能
+    {error, NoActive} = call(<<"update_task">>, #{<<"task_id">> => <<"MS-2">>, <<"milestone">> => <<"active">>}),
+    ?assertMatch(<<"invalid milestone: project MS has no active milestone; list_milestones", _/binary>>, NoActive),
+    {ok, #{<<"status">> := <<"active">>}} = call(<<"transition_milestone">>, #{<<"milestone_id">> => <<"ms-m1">>, <<"action">> => <<"activate">>}),
+    {error, Two} = call(<<"transition_milestone">>, #{<<"milestone_id">> => <<"MS-M2">>, <<"action">> => <<"activate">>}),
+    ?assertMatch(<<"the project already has an active milestone (MS-M1)", _/binary>>, Two),
+    {ok, #{<<"updated">> := [<<"MS-2">>, <<"MS-3">>], <<"failed">> := [#{<<"id">> := <<"MS-9">>}]}} =
+        call(<<"assign_milestone">>, #{<<"project_key">> => <<"MS">>, <<"task_ids">> => [<<"MS-2">>, <<"MS-3">>, <<"MS-9">>], <<"milestone">> => <<"active">>}),
+    {ok, #{<<"tasks">> := Active}} = call(<<"list_tasks">>, #{<<"project_key">> => <<"MS">>, <<"milestone">> => <<"active">>}),
+    ?assertEqual(3, length(Active)),
+    %% 挪出去要带原因
+    {ok, #{<<"milestone">> := <<"MS-M2">>, <<"milestone_log">> := [_, #{<<"comment">> := <<"later">>}]}} =
+        call(<<"update_task">>, #{<<"task_id">> => <<"MS-3">>, <<"milestone">> => <<"0.2">>, <<"milestone_comment">> => <<"later">>}),
+    {ok, #{<<"changes">> := Changes}} = call(<<"get_milestone">>, #{<<"milestone_id">> => <<"MS-M1">>}),
+    %% 不同任务在同一毫秒里的先后不定，只比条数
+    ?assertEqual([<<"in">>, <<"in">>, <<"in">>, <<"out">>], lists:sort([D || #{<<"direction">> := D} <- Changes])),
+    %% BQL
+    {ok, #{<<"total">> := 2}} = call(<<"query_tasks">>, #{<<"bql">> => <<"milestone = active">>}),
+    %% 发布：没做完的挪到 0.2；已发布的不能再加
+    {ok, _} = call(<<"transition_task">>, #{<<"task_id">> => <<"MS-1">>, <<"to">> => <<"IN_PROGRESS">>}),
+    {ok, _} = call(<<"transition_task">>, #{<<"task_id">> => <<"MS-1">>, <<"to">> => <<"DONE">>, <<"commits">> => []}),
+    {ok, #{<<"status">> := <<"released">>, <<"summary">> := #{<<"carried_over">> := [<<"MS-2">>], <<"carried_to">> := <<"MS-M2">>,
+                                                              <<"pending_verify">> := [<<"MS-1">>], <<"notes">> := <<"- a">>}}} =
+        call(<<"transition_milestone">>, #{<<"milestone_id">> => <<"MS-M1">>, <<"action">> => <<"release">>,
+                                           <<"carry_over">> => <<"0.2">>, <<"notes">> => <<"- a">>}),
+    {error, Released} = call(<<"update_task">>, #{<<"task_id">> => <<"MS-2">>, <<"milestone">> => <<"MS-M1">>}),
+    ?assertMatch(<<"invalid milestone: 0.1 is released", _/binary>>, Released),
+    {error, State} = call(<<"transition_milestone">>, #{<<"milestone_id">> => <<"MS-M1">>, <<"action">> => <<"pause">>}),
+    ?assertMatch(<<"cannot pause a released milestone", _/binary>>, State),
+    {ok, #{<<"milestones">> := [#{<<"id">> := <<"MS-M2">>}]}} = call(<<"list_milestones">>, #{<<"project_key">> => <<"MS">>}),
+    {ok, #{<<"milestones">> := [_, _]}} = call(<<"list_milestones">>, #{<<"project_key">> => <<"MS">>, <<"include_released">> => true}),
+    {ok, #{<<"name">> := <<"0.2.0">>}} = call(<<"update_milestone">>, #{<<"milestone_id">> => <<"MS-M2">>, <<"name">> => <<"0.2.0">>}),
+    %% 资源 bosun://projects 带当前 milestone（没有进行中时为 null）
+    {ok, _} = call(<<"transition_milestone">>, #{<<"milestone_id">> => <<"MS-M2">>, <<"action">> => <<"activate">>}),
+    {ok, #{<<"active_milestone">> := #{<<"id">> := <<"MS-M2">>, <<"name">> := <<"0.2.0">>}}} = call(<<"get_project">>, #{<<"key">> => <<"MS">>}),
+    %% work_on_task 提示带一句 milestone
+    [Prompt] = bosun_mcp:prompts(),
+    {ok, [#{<<"content">> := #{<<"text">> := Text}}]} = (Prompt#mcp_prompt.handler)(#{<<"task_id">> => <<"MS-2">>}),
+    ?assertNotEqual(nomatch, binary:match(Text, <<"It belongs to the active milestone 0.2.0 (MS-M2)">>)).

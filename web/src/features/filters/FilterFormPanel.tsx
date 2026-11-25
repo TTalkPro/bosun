@@ -45,7 +45,7 @@ const FilterFormPanel = ({ query, editing, onClose, onSaved }: Props) => {
   };
 
   return (
-    <SidePanel
+    <SidePanel size="md"
       title={editing ? `编辑筛选器 · ${editing.name}` : '保存为筛选器'}
       onClose={onClose}
       busy={busy}
@@ -58,7 +58,7 @@ const FilterFormPanel = ({ query, editing, onClose, onSaved }: Props) => {
     >
       <div className="space-y-4">
         <div>
-          <label htmlFor="filter-name" className="mb-1 block text-sm font-medium">名称</label>
+          <label htmlFor="filter-name" className="mb-2 block text-sm font-medium">名称</label>
           <Input
             id="filter-name"
             value={name}
@@ -70,7 +70,7 @@ const FilterFormPanel = ({ query, editing, onClose, onSaved }: Props) => {
           {errors.name && <p className="mt-1 text-xs text-destructive">{errors.name}</p>}
         </div>
         <div>
-          <label htmlFor="filter-bql" className="mb-1 block text-sm font-medium">BQL</label>
+          <label htmlFor="filter-bql" className="mb-2 block text-sm font-medium">BQL</label>
           <Textarea
             id="filter-bql"
             value={bql}

@@ -71,7 +71,7 @@ const LinkPanel = ({ task, onClose, onChanged }: Props) => {
   };
 
   return (
-    <SidePanel
+    <SidePanel size="md"
       title={`添加关联 · ${task.id}`}
       onClose={onClose}
       busy={busy}
@@ -100,7 +100,7 @@ const LinkPanel = ({ task, onClose, onChanged }: Props) => {
         </div>
 
         <div>
-          <label htmlFor="link-target" className="mb-1 block text-sm font-medium">目标任务</label>
+          <label htmlFor="link-target" className="mb-2 block text-sm font-medium">目标任务</label>
           <Input
             id="link-target"
             autoFocus

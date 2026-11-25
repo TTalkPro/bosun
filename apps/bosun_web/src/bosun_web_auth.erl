@@ -108,6 +108,8 @@ required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"projects">>]) -> <<"man
 required_scope(<<"PATCH">>,  [_, <<"api">>, <<"v1">>, <<"projects">>, _]) -> <<"manage">>;
 required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"projects">>, _, <<"tasks">>]) -> <<"write">>;
 required_scope(<<"PATCH">>,  [_, <<"api">>, <<"v1">>, <<"tasks">>, _]) -> <<"write">>;
+%% 批量设置任务归属算任务协作（同 PATCH 任务）；milestone 本身的增删改 / 状态走缺省 manage
+required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"projects">>, _, <<"tasks">>, <<"milestone">>]) -> <<"write">>;
 required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"tasks">>, _, <<"transition">>]) -> <<"write">>;
 required_scope(<<"POST">>,   [_, <<"api">>, <<"v1">>, <<"tasks">>, _, <<"links">>]) -> <<"write">>;
 required_scope(<<"DELETE">>, [_, <<"api">>, <<"v1">>, <<"tasks">>, _, <<"links">>, _, _]) -> <<"write">>;

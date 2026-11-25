@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import FormField from '@/components/FormField';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -58,43 +59,29 @@ const UserFormPanel = ({ user, onClose }: Props) => {
   };
 
   return (
-    <SidePanel title={editing ? `编辑用户 ${user.name}` : '新建用户'} onClose={onClose} busy={busy}
+    <SidePanel size="md" title={editing ? `编辑用户 ${user.name}` : '新建用户'} onClose={onClose} busy={busy}
       actions={<><Button variant="outline" onClick={onClose} disabled={busy}>取消</Button><Button onClick={submit} disabled={busy}>{editing ? '保存' : '创建'}</Button></>}>
-      <div className="space-y-4">
-        <div>
-          <Label htmlFor="user-email">邮箱</Label>
+      <div className="space-y-5">
+        <FormField label="邮箱" htmlFor="user-email" error={errors.email} hint={editing ? '登录用，不可修改' : '登录用'}>
           <Input id="user-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={editing} aria-invalid={!!errors.email} autoFocus={!editing} autoComplete="off" />
-          <p className={errors.email ? 'mt-1 text-xs text-destructive' : 'mt-1 text-xs text-muted-foreground'}>
-            {errors.email ?? (editing ? '登录用，不可修改' : '登录用')}
-          </p>
-        </div>
-        <div>
-          <Label htmlFor="user-name">显示名</Label>
+        </FormField>
+        <FormField label="显示名" htmlFor="user-name" error={errors.name} hint="任务历史 / Feedback 的署名，组织内唯一">
           <Input id="user-name" value={name} onChange={(e) => setName(e.target.value)} aria-invalid={!!errors.name} autoFocus={editing} />
-          <p className={errors.name ? 'mt-1 text-xs text-destructive' : 'mt-1 text-xs text-muted-foreground'}>
-            {errors.name ?? '任务历史 / Feedback 的署名，组织内唯一'}
-          </p>
-        </div>
-        <div>
-          <Label>角色</Label>
+        </FormField>
+        <FormField label="角色" htmlFor="user-role" error={errors.role}
+          hint={isSelf ? '不能把自己降级为成员，除非组织里还有别的管理员' : '管理员可以管用户、组织信息与导入导出'}>
           <Select value={role} onValueChange={(v) => setRole(v as Role)}>
-            <SelectTrigger aria-invalid={!!errors.role} className="w-full"><SelectValue /></SelectTrigger>
+            <SelectTrigger id="user-role" aria-invalid={!!errors.role} className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="member">成员</SelectItem>
               <SelectItem value="admin">管理员</SelectItem>
             </SelectContent>
           </Select>
-          <p className={errors.role ? 'mt-1 text-xs text-destructive' : 'mt-1 text-xs text-muted-foreground'}>
-            {errors.role ?? (isSelf ? '不能把自己降级为成员，除非组织里还有别的管理员' : '管理员可以管用户、组织信息与导入导出')}
-          </p>
-        </div>
-        <div>
-          <Label htmlFor="user-password">{editing ? '重置密码' : '初始密码'}</Label>
+        </FormField>
+        <FormField label={editing ? '重置密码' : '初始密码'} htmlFor="user-password" error={errors.password}
+          hint={editing ? '留空不改；填了就重置为这个' : '至少 8 位，线下告诉对方，登录后可自行修改'}>
           <Input id="user-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} aria-invalid={!!errors.password} autoComplete="new-password" />
-          <p className={errors.password ? 'mt-1 text-xs text-destructive' : 'mt-1 text-xs text-muted-foreground'}>
-            {errors.password ?? (editing ? '留空不改；填了就重置为这个' : '至少 8 位，线下告诉对方，登录后可自行修改')}
-          </p>
-        </div>
+        </FormField>
         {editing && (
           <div className="flex items-center gap-2">
             <Switch id="user-active" checked={active} onCheckedChange={setActive} />

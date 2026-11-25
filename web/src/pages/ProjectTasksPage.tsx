@@ -3,7 +3,15 @@ import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { ChevronDown, Columns3, List, Plus, Settings } from 'lucide-react';
 import { useProject } from '@/api/projects';
 import { createTask, useTasks } from '@/api/tasks';
-import type { Status, TaskFilter, TaskKind } from '@/api/types';
+import type { Milestone, Status, TaskFilter, TaskKind } from '@/api/types';
+import { useMilestones } from '@/api/milestones';
+import BulkMilestoneBar from '@/features/milestones/BulkMilestoneBar';
+import MilestoneFormPanel from '@/features/milestones/MilestoneFormPanel';
+import { BacklogHeader, MilestoneHeader } from '@/features/milestones/MilestoneHeader';
+import MilestoneMoveProvider from '@/features/milestones/MilestoneMoveProvider';
+import MilestoneSwitcher from '@/features/milestones/MilestoneSwitcher';
+import ReleasePanel from '@/features/milestones/ReleasePanel';
+import { resolveScope, scopeQuery } from '@/features/milestones/meta';
 import { isApiError } from '@/api/client';
 import MarkdownView from '@/components/markdown/MarkdownView';
 import { Badge } from '@/components/ui/badge';
@@ -18,7 +26,7 @@ import { EMPTY_BOARD_FILTER, isBoardFilterActive, matchesBoardFilter, readBoardF
 import ListFacets from '@/features/tasks/ListFacets';
 import { rememberSort, rememberView, storedSort, storedView, type TasksView as View } from '@/features/tasks/prefs';
 import TaskStatCards from '@/features/dashboard/TaskStatCards';
-import ProjectFormDialog from '@/features/projects/ProjectFormDialog';
+import ProjectSettingsPanel from '@/features/projects/ProjectSettingsPanel';
 import TaskFilters from '@/features/tasks/TaskFilters';
 import TaskFormDialog from '@/features/tasks/TaskFormDialog';
 import TaskTable from '@/features/tasks/TaskTable';
@@ -57,7 +65,8 @@ const writeFilter = (f: TaskFilter): URLSearchParams => {
   return sp;
 };
 // 执行人 / 优先级 / 需要关注：看板（前端过滤）与列表（服务端过滤）共用这几个 URL 参数，改别的筛选、切视图时原样带上
-const BOARD_PARAMS = ['who', 'pri', 'attn'];
+// m = milestone 范围（14）：改筛选、切视图时一样带上
+const BOARD_PARAMS = ['who', 'pri', 'attn', 'm'];
 const carryBoard = (from: URLSearchParams, to: URLSearchParams): URLSearchParams => {
   BOARD_PARAMS.forEach((k) => { const v = from.get(k); if (v) to.set(k, v); });
   return to;
@@ -76,9 +85,11 @@ const ProjectTasksPage = () => {
   const filter = useMemo(() => readFilter(sp), [sp]);
   const { enqueueSnackbar } = useSnackbar();
   const handleError = useApiError();
-  const view = readView(sp);
+  // URL / 偏好里要的视图；实际视图见下面的 view：看板只在选中某个 milestone 时提供
+  const requestedView = readView(sp);
   const withView = (next: URLSearchParams, v: View) => { next.set('view', v); return next; };
-  const setFilter = (f: TaskFilter) => setSp(carryBoard(sp, withView(writeFilter(f), view)), { replace: true });
+  // 写回的是「要的」视图，不是实际视图：在全部 / 待规划里改筛选，切回某个 milestone 时还是原来选的看板
+  const setFilter = (f: TaskFilter) => setSp(carryBoard(sp, withView(writeFilter(f), requestedView)), { replace: true });
   const setView = (v: View) => {
     rememberView(v);
     setSp(carryBoard(sp, withView(writeFilter({ ...filter, offset: 0 }), v)), { replace: true });
@@ -90,31 +101,58 @@ const ProjectTasksPage = () => {
   const setSort = (s: BoardSort) => { setSortState(s); rememberSort(s); };
 
   const { data: project, error: projectError, isLoading: loadingProject } = useProject(projectKey);
+  const { data: msData } = useMilestones(project ? projectKey : undefined);
+  const milestones = useMemo(() => msData?.milestones ?? [], [msData]);
+  const activeId = milestones.find((m) => m.status === 'active')?.id ?? project?.active_milestone?.id ?? undefined;
+  // 看板只看一个 milestone（或待规划）；列表另有「全部」（14 D3）
+  const scope = resolveScope(sp.get('m'), requestedView, activeId);
+  // 全部任务 / 待规划只有列表；选中 milestone 才能在看板和列表之间切换
+  const view: View = scope.kind === 'milestone' ? requestedView : 'list';
+  const scopeMilestone = scope.kind === 'milestone' ? milestones.find((m) => m.id === scope.id) : undefined;
+  const setScope = (m: string) => {
+    const next = new URLSearchParams(sp);
+    next.set('m', m);
+    next.delete('offset');
+    setSp(next, { replace: true });
+  };
+  // 新建任务缺省进当前看的 milestone（已发布的不行）；待规划 = 明确不排期
+  const defaultMilestone = scope.kind === 'milestone' ? (scopeMilestone?.status === 'released' ? undefined : scope.id)
+    : scope.kind === 'backlog' ? '' : undefined;
+  const [msForm, setMsForm] = useState<{ milestone?: Milestone } | null>(null);
   // 看板：状态筛选只决定显示哪几列，请求里不带分页
   // 看板：一次拉全、在前端筛与排（列内排序看工具条）；列表：分面与排序交给服务端，翻页才对
-  const boardQuery = useMemo(() => ({ ...filter, sort: undefined, offset: 0, limit: BOARD_LIMIT }), [filter]);
+  const msQuery = scopeQuery(scope);
+  const boardQuery = useMemo(() => ({ ...filter, sort: undefined, offset: 0, limit: BOARD_LIMIT, milestone: msQuery }), [filter, msQuery]);
   const listQuery = useMemo(() => ({
     ...filter,
+    milestone: msQuery,
     priority: boardFilter.priority.length ? boardFilter.priority : undefined,
     assignee: boardFilter.who.length ? boardFilter.who : undefined,
     attention: boardFilter.attention || undefined,
-  }), [filter, boardFilter]);
+  }), [filter, boardFilter, msQuery]);
   const { data, isLoading } = useTasks(project ? projectKey : undefined, view === 'board' ? boardQuery : listQuery);
   const boardTasks = useMemo(() => (data?.tasks ?? []).filter((t) => matchesBoardFilter(t, boardFilter)), [data, boardFilter]);
   const [createTitle, setCreateTitle] = useState<string | undefined>(undefined);
   const quickCreate = async (title: string) => {
     try {
-      const t = await createTask(projectKey, { title });
+      const t = await createTask(projectKey, { title, milestone: defaultMilestone });
       enqueueSnackbar(`已创建 ${t.id}`, { variant: 'success', autoHideDuration: 1500 });
     } catch (e) { handleError(e); throw e; }
   };
   // 统计按整个项目算，不跟筛选走（筛选只影响下面的看板 / 列表）
-  const { data: stats } = useStats(14, project ? projectKey : undefined);
+  // 选中 milestone 时统计卡片与燃尽跟着它走（14 §5）；全部 / 待规划时看整个项目
+  const { data: stats } = useStats(14, project ? projectKey : undefined, scope.kind === 'milestone' ? scope.id : undefined);
+  const [releasing, setReleasing] = useState(false);
   const [hidden, setHidden] = useHiddenColumns('bosun.tasks.columns');
   const pageSize = filter.limit ?? DEFAULT_PAGE_SIZE;
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
   const [descOpen, setDescOpen] = useState(false);
+  // 列表勾选：跟着当前这页 / 这组筛选走，换页、换范围就清空（不跨页记，免得批量动到看不见的任务）
+  const selKey = `${view}|${msQuery ?? ''}|${sp.toString()}`;
+  const [selection, setSelection] = useState<{ key: string; ids: string[] }>({ key: '', ids: [] });
+  const selectedIds = selection.key === selKey ? selection.ids : [];
+  const selectedTasks = (data?.tasks ?? []).filter((t) => selectedIds.includes(t.id));
 
   if (isApiError(projectError) && projectError.status === 404) return <NotFoundPage message={`项目 ${projectKey} 不存在`} />;
 
@@ -160,7 +198,24 @@ const ProjectTasksPage = () => {
         <Card className="gap-0 p-4 py-4"><MarkdownView markdown={project.description} /></Card>
       )}
 
-      <TaskStatCards counts={stats?.projects[projectKey]} daily={stats?.daily} />
+      <div className="flex flex-wrap items-center gap-2">
+        <MilestoneSwitcher milestones={milestones} scope={scope} onChange={setScope} allowAll
+          onCreate={project && !project.archived ? () => setMsForm({}) : undefined}
+          onManage={() => navigate(paths.milestones(projectKey))} />
+      </div>
+
+      {scope.kind === 'milestone' && scopeMilestone && (
+        <MilestoneHeader milestone={scopeMilestone} daily={stats?.milestone?.id === scopeMilestone.id ? stats.daily : undefined}
+          onEdit={() => setMsForm({ milestone: scopeMilestone })} onRelease={() => setReleasing(true)} />
+      )}
+      {scope.kind === 'backlog' && (
+        <BacklogHeader hasActive={!!activeId} planning={milestones.filter((m) => m.status === 'planning')} onCreate={() => setMsForm({})} />
+      )}
+      {/* 选中 milestone 时是这个 milestone 的数（「近 7 天新建」= 移入）；已发布的就不放了，看上面的发布记录 */}
+      {scopeMilestone?.status !== 'released' && (
+        <TaskStatCards counts={stats?.projects[projectKey]}
+          daily={stats?.range ? stats.daily.filter((d) => d.date <= stats.range!.today) : stats?.daily} />
+      )}
 
       <TaskFilters value={filter} onChange={setFilter}
         facets={view === 'list' ? <ListFacets value={boardFilter} onChange={setBoardFilter} counts={stats?.projects[projectKey]} /> : undefined}
@@ -168,9 +223,11 @@ const ProjectTasksPage = () => {
         onResetFacets={() => setBoardFilter(EMPTY_BOARD_FILTER)}
         extra={<>
         {view === 'list' && <ColumnsMenu columns={tableColumns({})} hidden={hidden} onChange={setHidden} />}
-        {viewSwitch}
+        {scope.kind === 'milestone' && viewSwitch}
       </>} />
 
+      <MilestoneMoveProvider projectKey={projectKey} milestones={milestones} onMoved={() => setSelection({ key: '', ids: [] })}>
+      {view === 'list' && <BulkMilestoneBar tasks={selectedTasks} onClear={() => setSelection({ key: '', ids: [] })} />}
       {view === 'board' ? (
         isLoading && !data
           ? <div className="flex gap-3">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-96 w-72 shrink-0 rounded-xl" />)}</div>
@@ -205,11 +262,17 @@ const ProjectTasksPage = () => {
           onSortChange={(sort) => setFilter({ ...filter, sort, offset: 0 })}
           onHideColumn={(k) => setHidden([...hidden, k])}
           rowActions
+          selected={selectedIds}
+          onSelectedChange={(ids) => setSelection({ key: selKey, ids })}
         />
       )}
+      </MilestoneMoveProvider>
 
-      {creating && <TaskFormDialog open onClose={() => setCreating(false)} projectKey={projectKey} defaultTitle={createTitle} onCreated={(t) => { if (view === 'list') navigate(paths.task(t.id)); }} />}
-      {editing && project && <ProjectFormDialog open onClose={() => setEditing(false)} project={project} />}
+      {releasing && scopeMilestone && <ReleasePanel milestone={scopeMilestone} milestones={milestones} onClose={() => setReleasing(false)} />}
+      {msForm && <MilestoneFormPanel projectKey={projectKey} milestone={msForm.milestone} onClose={() => setMsForm(null)}
+        onSaved={(m) => { if (!msForm.milestone) setScope(m.id); }} />}
+      {creating && <TaskFormDialog open onClose={() => setCreating(false)} projectKey={projectKey} defaultTitle={createTitle} defaultMilestone={defaultMilestone} onCreated={(t, keepOpen) => { if (view === 'list' && !keepOpen) navigate(paths.task(t.id)); }} />}
+      {editing && project && <ProjectSettingsPanel onClose={() => setEditing(false)} project={project} />}
     </div>
   );
 };

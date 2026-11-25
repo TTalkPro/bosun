@@ -154,6 +154,10 @@ const QueryPage = () => {
       case 'assignee': case 'reporter': case 'created_by': case 'creator': case 'requester':
         return [...new Set([...Object.keys(orgStats?.totals.by_assignee ?? {}), ...(actorsData?.actors ?? []).map((a) => a.name)])]
           .sort().map((n) => ({ label: n }));
+      case 'milestone': case 'fixversion':
+        return [{ label: 'active', detail: '各项目进行中的那个' },
+          ...(projectsData?.projects ?? []).flatMap((p) => (p.active_milestone ? [{ label: `"${p.active_milestone.name}"`, detail: `${p.key} 进行中` }] : []))];
+      case 'milestone_status': return [{ label: 'planning', detail: '规划中' }, { label: 'active', detail: '进行中' }, { label: 'released', detail: '已发布' }];
       case 'created': case 'updated': return [{ label: '-1d', detail: '1 天内' }, { label: '-7d', detail: '7 天内' }, { label: '-30d', detail: '30 天内' }, { label: 'now' }];
       default: return [];
     }

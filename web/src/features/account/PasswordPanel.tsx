@@ -20,7 +20,7 @@ interface FieldProps {
 
 const PasswordField = ({ id, label, value, onChange, error, helper, autoComplete, autoFocus }: FieldProps) => (
   <div>
-    <label htmlFor={id} className="mb-1 block text-sm font-medium">{label}</label>
+    <label htmlFor={id} className="mb-2 block text-sm font-medium">{label}</label>
     <Input
       id={id}
       type="password"
@@ -66,7 +66,7 @@ const PasswordPanel = ({ onClose }: { onClose: () => void }) => {
   };
 
   return (
-    <SidePanel title="修改密码" onClose={onClose} busy={busy}
+    <SidePanel size="md" title="修改密码" onClose={onClose} busy={busy}
       actions={<><Button variant="outline" onClick={onClose} disabled={busy}>取消</Button><Button onClick={submit} disabled={busy}>保存</Button></>}>
       <div className="space-y-4">
         <PasswordField id="pw-current" label="当前密码" value={current} onChange={setCurrent} error={errors.current} autoComplete="current-password" autoFocus />

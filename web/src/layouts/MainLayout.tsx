@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Link, Outlet, useLocation, useParams } from 'react-router';
-import { Anchor, ChevronDown, ChevronsUpDown, FolderKanban, Import, LayoutGrid, ListFilter, LogOut, Menu, Moon, SearchCheck, Sun, User, Users } from 'lucide-react';
+import { Anchor, ChevronDown, ChevronsUpDown, FolderKanban, Import, LayoutGrid, ListFilter, LogOut, Menu, Moon, SearchCheck, Sun, User, Users, Milestone as MilestoneIcon } from 'lucide-react';
 import { useProjects } from '@/api/projects';
 import { useFilters } from '@/api/query';
 import { logout, useMe } from '@/api/auth';
@@ -67,7 +67,9 @@ const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
   const { data } = useProjects(); const { data: filtersData } = useFilters();
   const me = useMe().data;
   const isAdmin = me?.user.role === 'admin'; const { key } = useParams(); const { pathname, search } = useLocation();
-  const current = key?.toUpperCase(); const activeFilter = pathname === paths.query ? new URLSearchParams(search).get('filter') : null;
+  const current = key?.toUpperCase();
+  // 项目页 URL 上明确选了哪个 milestone（侧栏子项高亮用）
+  const currentMs = key ? new URLSearchParams(search).get('m')?.toUpperCase() : undefined; const activeFilter = pathname === paths.query ? new URLSearchParams(search).get('filter') : null;
   return (
     <div className="flex h-full w-64 flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex h-14 items-center px-3">
@@ -87,11 +89,28 @@ const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
         </div>
         <CollapsibleGroup label="项目" count={data?.projects.length ?? 0}>
           {data?.projects.map((p) => (
-            <Link key={p.key} to={paths.project(p.key)} onClick={onNavigate} className={NAV} aria-current={current === p.key ? 'page' : undefined}>
-              <ProjectMark projectKey={p.key} />
-              <span className="min-w-0 flex-1 truncate">{p.name}</span>
-              <span className="rounded-full px-1.5 text-[11px] tabular-nums text-muted-foreground">{p.task_count}</span>
-            </Link>
+            <div key={p.key}>
+              <Link to={paths.project(p.key)} onClick={onNavigate} className={NAV}
+                aria-current={current === p.key && !(p.active_milestone && currentMs === p.active_milestone.id) ? 'page' : undefined}>
+                <ProjectMark projectKey={p.key} />
+                <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                <span className="rounded-full px-1.5 text-[11px] tabular-nums text-muted-foreground">{p.task_count}</span>
+              </Link>
+              {/* 进行中的 milestone：项目下面单独一行子项（树形缩进 + 左侧竖线），点了进这次发布的看板 */}
+              {p.active_milestone && (
+                <Link to={`${paths.project(p.key)}?view=board&m=${p.active_milestone.id}`} onClick={onNavigate}
+                  title={`进行中的 milestone ${p.active_milestone.name}：完成 ${p.active_milestone.percent}%`}
+                  aria-current={currentMs === p.active_milestone.id ? 'page' : undefined}
+                  className="ml-[18px] flex h-7 items-center gap-2 border-l border-sidebar-border pl-3.5 pr-2 text-xs text-sidebar-foreground/70 transition-colors hover:text-sidebar-accent-foreground aria-[current=page]:font-medium aria-[current=page]:text-sidebar-accent-foreground">
+                  <MilestoneIcon className="size-3.5 shrink-0 opacity-70" />
+                  <span className="min-w-0 truncate">{p.active_milestone.name}</span>
+                  <span className="ml-auto h-1 w-10 shrink-0 overflow-hidden rounded-full bg-sidebar-accent" aria-hidden>
+                    <span className="block h-full rounded-full bg-primary" style={{ width: `${p.active_milestone.percent}%` }} />
+                  </span>
+                  <span className="w-8 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">{p.active_milestone.percent}%</span>
+                </Link>
+              )}
+            </div>
           ))}
           {data?.projects.length === 0 && <p className="px-2 py-1 text-sm text-muted-foreground">还没有项目</p>}
         </CollapsibleGroup>

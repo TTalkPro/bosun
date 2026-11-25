@@ -12,7 +12,7 @@
 
 -include("bosun.hrl").
 
--export([overview/1]).
+-export([overview/1, milestone/2]).
 
 -define(DAY_MS, 86400000).
 %% 1970-01-01 的公历日数
@@ -69,6 +69,97 @@ overview(Projects, Opts) ->
                              <<"created">> => lists:nth(I + 1, maps:get(created, Daily)),
                              <<"completed">> => lists:nth(I + 1, maps:get(completed, Daily))}
                            || I <- lists:seq(0, Days - 1)]}.
+
+%% @doc 一个 milestone 的统计与燃尽（14 §5）。Opts 同 overview/1（tz_offset、now；days 不用）。
+%%
+%% - projects[Key] / totals：当前在这个 milestone 里的任务的计数（与 overview 同结构，含 Epic）；
+%% - daily：从开始日期（没写取创建日）到「发布日 / 目标日期与今天的较晚者」，每天一行：
+%%     created   = 当天移入范围的任务数（含建单时直接落进来的），
+%%     completed = 当天在范围内被迁移到 DONE 的次数，
+%%     remaining = 当天结束时范围内还没完成（不是 DONE / VERIFIED / REJECTED / CANCELLED）的任务数
+%%                 （已发布的最后一天按发布前一刻算，不让结转把曲线拉到 0）；
+%%                 今天以后为 null（前端只画理想线）；
+%%   范围按 milestone_log 回放（移入 / 移出 / 结转都算准），没有记录的老任务视为建单起就在；Epic 不计。
+%% - 超过 180 天只给最后 180 天。
+-spec milestone(term(), map()) -> {ok, map()} | {error, not_found}.
+milestone(Id0, Opts) ->
+    case bosun_milestone:get(Id0) of
+        {error, _} = E -> E;
+        {ok, #{<<"id">> := Id, <<"project_key">> := Key} = M} ->
+            Tz = clamp(maps:get(tz_offset, Opts, 0), -840, 840),
+            Now = maps:get(now, Opts, bosun_util:now_ms()),
+            TzMs = Tz * 60000,
+            DayOf = fun(Ms) -> (Ms + TzMs) div ?DAY_MS end,
+            Today = DayOf(Now),
+            [#milestone{} = Rec] = mnesia:dirty_read(milestone, Id),
+            StartDay = case Rec#milestone.start_date of
+                           undefined -> DayOf(Rec#milestone.created_at);
+                           SD -> date_day(SD)
+                       end,
+            EndDay = case Rec#milestone.released_at of
+                         RelAt when is_integer(RelAt) -> DayOf(RelAt);
+                         _ -> lists:max([Today | [date_day(TD) || TD <- [Rec#milestone.target_date], TD =/= undefined]])
+                     end,
+            First = max(min(StartDay, EndDay), EndDay - 179),
+            Days = EndDay - First + 1,
+            Project = bosun_task:visible(mnesia:dirty_index_read(task, Key, #task.project_key)),
+            Members = [T || T <- Project, T#task.milestone =:= Id],
+            {MemberCounts, _} = lists:foldl(fun(T, {Acc, D}) -> count_task(T, Acc, D, fun(_) -> none end) end,
+                                            {empty_counts(), #{created => [], completed => []}}, Members),
+            Steps = [T || T <- Project, bosun_task:kind_of(T) =:= task, touches(T, Id)],
+            %% 已发布的：发布那一刻没做完的被结转出去了，最后一天按「发布前一刻」算，曲线停在当时还剩多少
+            Cap = case Rec#milestone.released_at of RA when is_integer(RA) -> RA - 1; _ -> infinity end,
+            EndOf = fun(Day) -> min((Day + 1) * ?DAY_MS - TzMs - 1, Cap) end,
+            Daily = [begin
+                         Day = First + I,
+                         {Lo, Hi} = {EndOf(Day - 1), EndOf(Day)},
+                         Entered = length([1 || T <- Steps, entered_between(T, Id, Lo, Hi)]),
+                         Completed = length([1 || T <- Steps, #{to := done, at := At} <- T#task.history,
+                                                  At > Lo, At =< Hi, member_at(T, Id, At)]),
+                         Remaining = case Day > Today of
+                                         true -> null;
+                                         false -> length([1 || T <- Steps, member_at(T, Id, Hi), T#task.created_at =< Hi,
+                                                               not lists:member(status_at(T, Hi), [done, verified, rejected, cancelled])])
+                                     end,
+                         #{<<"date">> => date_bin(Day), <<"created">> => Entered, <<"completed">> => Completed,
+                           <<"remaining">> => Remaining}
+                     end || I <- lists:seq(0, Days - 1)],
+            Json = counts_json(MemberCounts),
+            {ok, #{<<"days">> => Days, <<"tz_offset">> => Tz,
+                   <<"projects">> => #{Key => Json}, <<"totals">> => Json, <<"daily">> => Daily,
+                   <<"milestone">> => maps:with([<<"id">>, <<"name">>, <<"status">>, <<"start_date">>, <<"target_date">>,
+                                                 <<"released_at">>, <<"counts">>], M),
+                   <<"range">> => #{<<"start">> => date_bin(First), <<"end">> => date_bin(EndDay), <<"today">> => date_bin(Today)}}}
+    end.
+
+%% 任务和这个 milestone 有没有过关系（现在在，或记录里进出过）
+touches(#task{milestone = Id}, Id) -> true;
+touches(#task{milestone_log = Log}, Id) when is_list(Log) ->
+    lists:any(fun(E) -> maps:get(from, E) =:= Id orelse maps:get(to, E) =:= Id end, Log);
+touches(_, _) -> false.
+
+%% At 时刻是否在这个 milestone 里：按记录回放；没有记录（老数据 / 导入）就看现在，并且从建单起算
+member_at(#task{milestone_log = Log}, Id, At) when is_list(Log), Log =/= [] ->
+    case [E || #{at := A} = E <- Log, A =< At] of
+        [] -> false;
+        Before -> maps:get(to, lists:last(Before)) =:= Id
+    end;
+member_at(#task{milestone = M, created_at = C}, Id, At) -> M =:= Id andalso C =< At.
+
+entered_between(#task{milestone_log = Log}, Id, Lo, Hi) when is_list(Log), Log =/= [] ->
+    lists:any(fun(#{to := To, at := A}) -> To =:= Id andalso A > Lo andalso A =< Hi end, Log);
+entered_between(#task{milestone = M, created_at = C}, Id, Lo, Hi) -> M =:= Id andalso C > Lo andalso C =< Hi.
+
+%% At 时刻的状态：history 里 at =< At 的最近一条。history 是新的在前（追加在头部）：先倒成时间顺序
+%% 再做稳定排序——同一毫秒里的「开始」「完成」两条，排完仍是完成在后
+status_at(#task{history = H}, At) ->
+    case lists:sort(fun(A, B) -> maps:get(at, A) =< maps:get(at, B) end, [E || #{at := A} = E <- lists:reverse(H), A =< At]) of
+        [] -> new;
+        Sorted -> maps:get(to, lists:last(Sorted))
+    end.
+
+date_day(<<Y:4/binary, "-", M:2/binary, "-", D:2/binary>>) ->
+    calendar:date_to_gregorian_days(binary_to_integer(Y), binary_to_integer(M), binary_to_integer(D)) - ?EPOCH_DAYS.
 
 %%====================================================================
 %% 内部

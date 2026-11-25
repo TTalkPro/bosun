@@ -20,16 +20,17 @@ list_tasks() ->
         {label, str(<<"Only tasks carrying this label">>)},
         {kind, enum([<<"task">>, <<"epic">>], <<"Only tasks or only epics. Default: both.">>)},
         {epic, str(<<"Only the steps of this epic (epic task id, e.g. BOS-11)">>)},
+        {milestone, str(<<"Only tasks of this milestone: id (BOS-M3) or name (0.1.4); \"active\" = the project's current release; \"backlog\" = not scheduled in any milestone">>)},
         {query, str(<<"Full-text (BM25) match on title / description / labels / feedback, plus id substring">>)},
         {limit, int(<<"Max results (default 100, max 500)">>)},
         {offset, int(<<"Skip this many results (pagination)">>)}
     ]))#{required => [<<"project_key">>]},
     beamai_mcp_types:make_tool(
         <<"list_tasks">>,
-        <<"List tasks of a project as summaries (id, title, status, priority, labels, feedback_count, open_question), newest first. Use get_task for the description, history and feedback of one task.">>,
+        <<"List tasks of a project as summaries (id, title, status, priority, labels, milestone, feedback_count, open_question), newest first. Use milestone=\"active\" to see the current release's work. Use get_task for the description, history and feedback of one task.">>,
         Schema,
         fun(#{<<"project_key">> := Key} = Args) ->
-                Filter = maps:with([<<"status">>, <<"label">>, <<"kind">>, <<"epic">>, <<"limit">>, <<"offset">>], Args),
+                Filter = maps:with([<<"status">>, <<"label">>, <<"kind">>, <<"epic">>, <<"milestone">>, <<"limit">>, <<"offset">>], Args),
                 Filter1 = case maps:get(<<"query">>, Args, undefined) of
                               undefined -> Filter;
                               Q -> Filter#{<<"q">> => Q}
@@ -78,6 +79,7 @@ create_task() ->
         {assignee, str(<<"Pre-assign an executor (e.g. another project's agent name). Whoever actually moves it to IN_PROGRESS becomes the assignee.">>)},
         {kind, enum([<<"task">>, <<"epic">>], <<"task (default) or epic. An epic is a goal whose steps are the tasks that point to it via `epic`; it has its own status, feedback and a derived progress.">>)},
         {epic, str(<<"Epic this task is a step of (epic task id, may be in another project). Not allowed when kind=epic.">>)},
+        {milestone, str(<<"Milestone (release) to schedule it in: id, name or \"active\". Omit to leave it in the backlog - a step of an epic then follows the epic's milestone.">>)},
         {actor, str(<<"Override the session identity for this call (normally omit; call identify once instead)">>)}
     ]))#{required => [<<"project_key">>, <<"title">>]},
     beamai_mcp_types:make_tool(
@@ -97,11 +99,13 @@ update_task() ->
         {priority, enum(?PRIORITIES, <<"New priority">>)},
         {labels, arr(<<"New label list (replaces existing labels)">>)},
         {assignee, str(<<"Re-assign the executor (empty string clears)">>)},
-        {epic, str(<<"Move the task under this epic (empty string detaches). kind itself cannot be changed.">>)}
+        {epic, str(<<"Move the task under this epic (empty string detaches). kind itself cannot be changed.">>)},
+        {milestone, str(<<"Move to this milestone (id, name or \"active\"); empty string moves it back to the backlog. For an epic, its unfinished steps follow.">>)},
+        {milestone_comment, str(<<"Why the milestone changed (e.g. \"not in this release\"); stored in the task's milestone_log">>)}
     ]))#{required => [<<"task_id">>]},
     beamai_mcp_types:make_tool(
         <<"update_task">>,
-        <<"Update title, description, priority, labels, assignee or epic of a task. Status is NOT changed here - use transition_task.">>,
+        <<"Update title, description, priority, labels, assignee, epic or milestone of a task. Status is NOT changed here - use transition_task.">>,
         Schema,
         fun(#{<<"task_id">> := Id} = Args) ->
                 reply(bosun_task:update(Id, (maps:remove(<<"task_id">>, Args))#{<<"actor">> => actor(Args)}));

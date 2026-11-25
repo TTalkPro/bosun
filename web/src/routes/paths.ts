@@ -7,5 +7,6 @@ export const paths = {
   account: '/account',
   org: '/org',
   project: (key: string) => `/projects/${key.toUpperCase()}`,
+  milestones: (key: string) => `/projects/${key.toUpperCase()}/milestones`,
   task: (id: string) => `/tasks/${id.toUpperCase()}`,
 };

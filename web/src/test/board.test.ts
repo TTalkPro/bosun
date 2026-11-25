@@ -6,7 +6,7 @@ import { ALL_STATUSES, nextStatuses } from '@/features/tasks/status';
 const task = (status: Status, blocked = false): TaskSummary => ({
   id: 'BOS-1', project_key: 'BOS', seq: 1, title: 't', status, priority: 'medium', labels: [],
   created_by: 'user', created_by_kind: 'human', assignee: null, assignee_kind: null, commits: [],
-  kind: 'task', epic: null, progress: null, blocked, feedback_count: 0, open_question: false,
+  kind: 'task', epic: null, milestone: null, milestone_name: null, progress: null, blocked, feedback_count: 0, open_question: false,
   created_at: '2026-11-24T00:00:00Z', updated_at: '2026-11-24T00:00:00Z',
 });
 

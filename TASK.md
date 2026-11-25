@@ -76,7 +76,23 @@
 - [x] [bitcask 10.0.0 → 12.0.0](tasks/2026-11-20-bitcask-12-upgrade.md)：去掉按命中字段加权与 merge 词典路径两处绕法；标签命中不再必然排在标题命中前面
 - [x] [bitcask 12.0.1 → 13.1.1](tasks/2026-11-24-bitcask-13-upgrade.md)：依赖改按 `git_subdir` 取 `apps/bitcask`（13.1.1 起干净环境才编得出 NIF）；代码不用改，既有索引直接可用
 - [x] [bitcask 13.1.1 → 13.1.2](tasks/2026-11-25-bitcask-13.1.2-upgrade.md)：PATCH，上游只升了内嵌的 libbitcask（库源码无变化）；代码不用改
+- [x] [bitcask 13.1.2 → 13.2.0](tasks/2026-11-25-bitcask-13.2.0-upgrade.md)：上游只改图层（布局 2），bosun 只用检索，代码不用改；这次也用 docker build 验了 git_subdir 干净拉取
 - [x] [审查：缺陷修复与优化](tasks/2026-11-19-audit-fixes.md)：key 轮换越权、导入跨组织写、序号回退覆盖、BQL 500、Epic 级联、前端提示全哑等；没动的建议也列在里面
 
 ## 9. 前端 UI 优化（2026-11-25）
 - [x] [项目看板 + 拖拽 + 外壳样式](tasks/2026-11-25-ui-kanban-refresh.md)：参照 shadcnuikit dashboard；dnd-kit 拖拽（触屏 / 键盘）、拖到完成 / 拒绝等弹证据 / 说明面板、列折叠、看板 / 列表切换、列表列显隐与分页、项目列表页 / 详情页统计卡片与动态图（新接口 `/api/v1/stats`）、任务详情页 / BQL 查询页 / 账户页 / 组织页 / 数据导入导出页 / 登录注册页改版、侧栏与筛选条改版
+- [x] [表单标签与输入框间距、焦点框压标签](tasks/2026-11-25-form-field-spacing.md)：统一 FormField、短表单面板变窄、新建项目先名称后 Key + 编号预览、新建任务「取消」按钮样式
+
+## 10. Milestone（2026-11-25，设计 14，已审定，M1～M4 完成）
+- [x] [设计稿](designs/14-milestone.md)：每项目一个进行中的 milestone、看板按 milestone、发布（未完成结转 + 快照 + 发布说明）、燃尽；与 Epic 正交；审定时改为 Epic 可进 milestone（没做完的步骤跟随）、归属变更留痕（milestone_log）
+- [x] M1 后端模型（表 / 规则 / REST / BQL / 备份 v3）：`bosun_milestone`、`bosun_web_milestones_h`；eunit `bosun_milestone_tests` 12 例 + ct `milestones`；`rebar3 check` 全绿（未提交）
+- [x] M2 前端主线：项目页 milestone 切换器（?m=，看板缺省进行中 / 没有则待规划，列表另有全部）+ 概况卡片 / 待规划提示、管理页 `/projects/:key/milestones`（卡片、开始 / 暂停 / 重新打开 / 删除、范围变更面板）、任务详情 Milestone 行 + 动态流里的归属变更、新建任务的 Milestone 属性（缺省当前看的）、看板卡片 / 列表行的 Milestone 子菜单、列表 Milestone 列与勾选批量、移出时写原因、侧栏显示进行中的 milestone、BQL 补全；后端补 project.active_milestone、批量带 comment、系统说明改中文；前端 65 例（新增 milestones.test.ts）、`rebar3 check` 全绿（未提交）
+- [x] M3 发布与统计：`bosun_stats:milestone/2` + `/api/v1/stats?milestone=`（计数与按 milestone_log 回放的燃尽，已发布按发布前一刻收尾）；概况卡片右侧燃尽图、统计卡片跟随 milestone；发布面板（交付 / 待验收 / 没做完的去向含新建、按 Epic 分组的发布说明草稿可改）；已发布的显示发布记录与发布说明；summary 加 carried_to_name；顺手修同毫秒状态历史排序（后端燃尽与前端进度卡片）；eunit 80 + ct 8、前端 68 例全绿（未提交）
+- [x] M4 MCP 与文档：新增 `bosun_mcp_milestone_tools`（list / get / create / update / transition / assign，权限 read / manage / write），list_tasks / create_task / update_task 加 milestone（update 另有 milestone_comment），milestone 相关错误文案给 Agent 下一步建议，work_on_task 提示带「在不在当前发布里」，bosun://bql 补字段；docs/AGENT-WORKFLOW（中 / 英）加 4d 节，docs/BQL.md、README（功能 / 工具 28 / REST）、designs/05 / 09 / 10 / 14 更新；MCP eunit 14 例（新增 milestones），ct 工具数改 28，范围变更顺序断言改为不依赖同毫秒先后；`rebar3 check` 全绿（eunit 81 + ct 8），前端 68 例（未提交）
+
+## 11. 文档与发布材料（2026-11-25，Bosun milestone 0.1.4 / BOS-67）
+- [x] BOS-68 更新所有文档：README（概览 + 截图 + 功能概览 + REST / 工具清单）、designs/00 / 02 / 07 / 14 与实现对齐（07 重写页面 / 路由 / 看板规则）
+- [x] BOS-69 [CHANGELOG.md](CHANGELOG.md)：0.1.0 ～ 0.1.3 按 tag 整理，未发布部分记 0.1.4
+- [x] BOS-70 [docs/FEATURES.md](docs/FEATURES.md)：按 17 个模块列全部功能
+- [x] BOS-71 README 功能截图：docs/screenshots/（9 张，演示数据 Acme，含深色）
+- [x] 界面调整（用户提出）：看板只在选中某个 milestone 时提供，全部任务 / 待规划只有列表；侧栏 milestone 改为项目下的独立子项（缩进 + 进度条 + 百分比）

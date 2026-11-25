@@ -1,12 +1,13 @@
 import { useCallback, useSyncExternalStore } from 'react';
 
 // 任务表格的可选列（ID、标题始终显示）。顺序 = 表格里的顺序
-export type ColumnKey = 'project' | 'status' | 'priority' | 'labels' | 'created_by' | 'assignee' | 'feedback' | 'updated';
+export type ColumnKey = 'project' | 'status' | 'priority' | 'milestone' | 'labels' | 'created_by' | 'assignee' | 'feedback' | 'updated';
 
 export const COLUMN_LABEL: Record<ColumnKey, string> = {
   project: '项目',
   status: '状态',
   priority: '优先级',
+  milestone: 'Milestone',
   labels: '标签',
   created_by: '提出人',
   assignee: '执行人',
@@ -18,7 +19,7 @@ export const COLUMN_LABEL: Record<ColumnKey, string> = {
 export const tableColumns = ({ showProject = false, compact = false }: { showProject?: boolean; compact?: boolean }): ColumnKey[] =>
   compact
     ? [...(showProject ? ['project' as const] : []), 'status', 'priority', 'assignee']
-    : [...(showProject ? ['project' as const] : []), 'status', 'priority', 'labels', 'created_by', 'assignee', 'feedback', 'updated'];
+    : [...(showProject ? ['project' as const] : []), 'status', 'priority', 'milestone', 'labels', 'created_by', 'assignee', 'feedback', 'updated'];
 
 export const PAGE_SIZES = [10, 25, 50, 100] as const;
 export const DEFAULT_PAGE_SIZE = 25;

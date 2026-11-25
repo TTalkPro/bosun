@@ -52,7 +52,7 @@ const KeyFormPanel = ({ onClose }: { onClose: () => void }) => {
   };
 
   return (
-    <SidePanel
+    <SidePanel size="md"
       title={created ? `Key「${created.name}」已创建` : '新建 API Key'}
       onClose={onClose}
       busy={busy}
@@ -88,7 +88,7 @@ claude mcp add --transport http bosun ${window.location.origin}/mcp \\
       ) : (
         <div className="space-y-4">
           <div>
-            <label htmlFor="key-name" className="mb-1 block text-sm font-medium">名字</label>
+            <label htmlFor="key-name" className="mb-2 block text-sm font-medium">名字</label>
             <Input
               id="key-name"
               autoFocus
@@ -119,7 +119,7 @@ claude mcp add --transport http bosun ${window.location.origin}/mcp \\
           </div>
 
           <div>
-            <label htmlFor="key-projects" className="mb-1 block text-sm font-medium">项目白名单（可选）</label>
+            <label htmlFor="key-projects" className="mb-2 block text-sm font-medium">项目白名单（可选）</label>
             <Input
               id="key-projects"
               value={projectKeysText}
@@ -130,7 +130,7 @@ claude mcp add --transport http bosun ${window.location.origin}/mcp \\
           </div>
 
           <div>
-            <label htmlFor="key-expires" className="mb-1 block text-sm font-medium">过期日期（可选）</label>
+            <label htmlFor="key-expires" className="mb-2 block text-sm font-medium">过期日期（可选）</label>
             <Input id="key-expires" type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
             <p className="mt-1 text-xs text-muted-foreground">{expiresAt ? '当天结束前有效（本地时区）' : '留空表示不过期'}</p>
           </div>

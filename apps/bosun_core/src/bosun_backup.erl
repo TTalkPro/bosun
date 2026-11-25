@@ -20,7 +20,7 @@
 -export([export/0, export_file/1, import/2, import_file/2]).
 
 -define(FORMAT, <<"bosun-export">>).
--define(VERSION, 2).
+-define(VERSION, 3).   %% 3：milestones（14）、任务 milestone / milestone_log、项目 milestone_seq
 
 %%====================================================================
 %% 导出
@@ -45,6 +45,8 @@ export() ->
                end,
     Actors = [A || #actor{org_id = O} = A <- mnesia:dirty_select(actor, [{'_', [], ['$_']}]),
                    Org =:= undefined orelse O =:= Org],
+    Milestones = [M || M <- mnesia:dirty_select(milestone, [{'_', [], ['$_']}]),
+                       Org =:= undefined orelse maps:is_key(M#milestone.project_key, Keys)],
     Links = [L || L <- bosun_link:all(),
                   Org =:= undefined orelse (maps:is_key(L#link.from, Ids) andalso maps:is_key(L#link.to, Ids))],
     {ok, #{<<"format">> => ?FORMAT,
@@ -56,6 +58,7 @@ export() ->
            <<"filters">> => [filter_out(F) || F <- sort_by(#filter.id, Filters)],
            <<"actors">> => [actor_out(A) || A <- sort_by(#actor.name, Actors)],
            <<"links">> => [link_out(L) || L <- sort_by(#link.key, Links)],
+           <<"milestones">> => [milestone_out(M) || M <- sort_by(#milestone.id, Milestones)],
            <<"counters">> => maps:from_list([{atom_to_binary(K, utf8), V} || #counter{key = K, value = V} <- Counters])}}.
 
 -spec export_file(file:name_all()) -> ok | {error, term()}.
@@ -69,6 +72,7 @@ project_out(#project{} = P) ->
     #{<<"key">> => P#project.key, <<"name">> => P#project.name, <<"description">> => P#project.description,
       <<"task_seq">> => P#project.task_seq, <<"archived">> => P#project.archived,
       <<"org_id">> => P#project.org_id,
+      <<"milestone_seq">> => seq0(P#project.milestone_seq),
       <<"created_at">> => P#project.created_at, <<"updated_at">> => P#project.updated_at}.
 
 task_out(#task{} = T) ->
@@ -82,7 +86,24 @@ task_out(#task{} = T) ->
       <<"assignee">> => T#task.assignee,
       <<"kind">> => atom_to_binary(bosun_task:kind_of(T), utf8),
       <<"epic">> => T#task.epic,
+      <<"milestone">> => T#task.milestone,
+      <<"milestone_log">> => [#{<<"from">> => maps:get(from, E), <<"to">> => maps:get(to, E),
+                                <<"actor">> => maps:get(actor, E), <<"at">> => maps:get(at, E),
+                                <<"comment">> => maps:get(comment, E, undefined)}
+                              || E <- case T#task.milestone_log of undefined -> []; L -> L end],
       <<"created_at">> => T#task.created_at, <<"updated_at">> => T#task.updated_at}.
+
+milestone_out(#milestone{} = M) ->
+    #{<<"id">> => M#milestone.id, <<"project_key">> => M#milestone.project_key, <<"seq">> => M#milestone.seq,
+      <<"name">> => M#milestone.name, <<"description">> => M#milestone.description,
+      <<"status">> => atom_to_binary(M#milestone.status, utf8),
+      <<"start_date">> => M#milestone.start_date, <<"target_date">> => M#milestone.target_date,
+      <<"released_at">> => M#milestone.released_at, <<"summary">> => M#milestone.summary,
+      <<"created_by">> => M#milestone.created_by,
+      <<"created_at">> => M#milestone.created_at, <<"updated_at">> => M#milestone.updated_at}.
+
+seq0(undefined) -> 0;
+seq0(N) -> N.
 
 history_out(#{to := To, actor := Actor, at := At} = H) ->
     #{<<"from">> => case maps:get(from, H, undefined) of undefined -> undefined; F -> bosun_task_status:to_binary(F) end,
@@ -132,7 +153,7 @@ filter_out(#filter{} = F) ->
 %%   3. 序号：项目的 task_seq、任务的 feedback_seq 取「文件里的、库里已有的、实际最大序号」三者
 %%      最大值——merge 一个旧导出时序号不会回退（回退后新建的任务会和已有任务撞号）。
 -spec import(map(), map()) -> {ok, map()} | {error, term()}.
-import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1; V =:= 2 ->
+import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1; V =:= 2; V =:= 3 ->
     Mode = maps:get(mode, Opts, merge),
     DryRun = maps:get(dry_run, Opts, false) =:= true,
     Org = bosun_scope:org_id(),
@@ -143,6 +164,7 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
         Filters0 = [(filter_in(F))#filter{org_id = org_in(F, Org)} || F <- list_in(<<"filters">>, Data)],
         Actors = [(actor_in(A))#actor{org_id = org_in(A, Org)} || A <- list_in(<<"actors">>, Data)],
         Links = [link_in(L) || L <- list_in(<<"links">>, Data)],
+        Milestones = [milestone_in(M) || M <- list_in(<<"milestones">>, Data)],
         Counters = case Org of
                        undefined -> [{counter_in(K), N} || {K, N} <- maps:to_list(map_in(<<"counters">>, Data)), is_integer(N)];
                        _ -> []
@@ -151,7 +173,8 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
         %% 任务 / 反馈 / 关联牵涉到的项目 key
         Referenced = lists:usort([T#task.project_key || T <- Tasks]
                                  ++ [project_of(F#feedback.task_id) || F <- Fbs]
-                                 ++ lists:append([[project_of(L#link.from), project_of(L#link.to)] || L <- Links])),
+                                 ++ lists:append([[project_of(L#link.from), project_of(L#link.to)] || L <- Links])
+                                 ++ [M#milestone.project_key || M <- Milestones]),
         Res = bosun_store:transaction(fun() ->
             %% replace 会删掉的（删之前数）
             Deleted = case Mode of
@@ -166,7 +189,7 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
             case {Mode, Org} of
                 {replace, undefined} ->
                     lists:foreach(fun(Tab) -> [mnesia:delete({Tab, K}) || K <- mnesia:all_keys(Tab)] end,
-                                  [project, task, feedback, filter, counter, actor, link]);
+                                  [project, task, feedback, filter, counter, actor, link, milestone]);
                 {replace, _} -> delete_org_data(Org);
                 {merge, _} -> ok
             end,
@@ -210,11 +233,22 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
             %% 序号只进不退
             MaxTaskSeq = max_by([{T#task.project_key, T#task.seq} || T <- Tasks]),
             MaxFbSeq = max_by([{F#feedback.task_id, F#feedback.seq} || F <- Fbs]),
+            MaxMsSeq = max_by([{M#milestone.project_key, M#milestone.seq} || M <- Milestones]),
+            %% 任务挂的 milestone：要么在文件里，要么库里已有（task_in 已保证同项目）
+            ImportedMs = maps:from_list([{M#milestone.id, true} || M <- Milestones]),
+            lists:foreach(fun(#task{milestone = undefined}) -> ok;
+                             (#task{milestone = MId, id = TId}) ->
+                                  maps:is_key(MId, ImportedMs) orelse mnesia:read(milestone, MId) =/= []
+                                      orelse bosun_store:abort({invalid, data, <<TId/binary, " refers to unknown milestone ", MId/binary>>})
+                          end, Tasks),
+            ExistingMs = [Id || Id <- maps:keys(ImportedMs), mnesia:read(milestone, Id, write) =/= []],
             Projects1 = [begin
                              Base = maps:get(K, Imported, maps:get(K, Existing, undefined)),
                              Old = case maps:get(K, Existing, undefined) of undefined -> 0; #project{task_seq = S} -> S end,
-                             Base#project{task_seq = lists:max([Base#project.task_seq, Old, maps:get(K, MaxTaskSeq, 0)])}
-                         end || K <- lists:usort(maps:keys(Imported) ++ maps:keys(MaxTaskSeq))],
+                             OldMs = case maps:get(K, Existing, undefined) of undefined -> 0; #project{milestone_seq = MS} -> seq0(MS) end,
+                             Base#project{task_seq = lists:max([Base#project.task_seq, Old, maps:get(K, MaxTaskSeq, 0)]),
+                                          milestone_seq = lists:max([seq0(Base#project.milestone_seq), OldMs, maps:get(K, MaxMsSeq, 0)])}
+                         end || K <- lists:usort(maps:keys(Imported) ++ maps:keys(MaxTaskSeq) ++ maps:keys(MaxMsSeq))],
             Tasks1 = [begin
                           Base = maps:get(Id, ImportedTasks, maps:get(Id, ExistingTasks, undefined)),
                           Old = case maps:get(Id, ExistingTasks, undefined) of undefined -> 0; #task{feedback_seq = S} -> S end,
@@ -227,8 +261,16 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
                        <<"filters">> => (new_updated([F#filter.id || F <- Filters],
                                                      fun(Id) -> Mode =:= merge andalso maps:is_key(Id, OwnFilterIds) end))#{<<"skipped">> => FiltersSkipped},
                        <<"links">> => length(Links),
+                       <<"milestones">> => #{<<"new">> => length(Milestones) - length(ExistingMs), <<"updated">> => length(ExistingMs)},
                        <<"deleted">> => Deleted},
-            lists:foreach(fun(R) -> ok = mnesia:write(R) end, Projects1 ++ Tasks1 ++ Fbs ++ Filters ++ Actors1 ++ Links),
+            lists:foreach(fun(R) -> ok = mnesia:write(R) end, Projects1 ++ Tasks1 ++ Fbs ++ Filters ++ Actors1 ++ Links ++ Milestones),
+            %% 合并后每个项目仍然最多一个进行中（14 D1）
+            lists:foreach(fun(K) ->
+                case [M || M <- mnesia:index_read(milestone, K, #milestone.project_key), M#milestone.status =:= active] of
+                    [_, _ | _] -> bosun_store:abort({invalid, data, <<"project ", K/binary, " would have more than one active milestone">>});
+                    _ -> ok
+                end
+            end, lists:usort([M#milestone.project_key || M <- Milestones])),
             lists:foreach(fun({K, N}) ->
                 Cur = case mnesia:read(counter, K) of [#counter{value = C}] -> C; [] -> 0 end,
                 ok = mnesia:write(#counter{key = K, value = max(Cur, N)})
@@ -246,7 +288,8 @@ import(#{<<"format">> := ?FORMAT, <<"version">> := V} = Data, Opts) when V =:= 1
                 {ok, #{<<"mode">> => atom_to_binary(Mode, utf8),
                        <<"projects">> => length(Projects), <<"tasks">> => length(Tasks),
                        <<"feedback">> => length(Fbs), <<"filters">> => length(Filters),
-                       <<"filters_skipped">> => FiltersSkipped, <<"detail">> => Detail}};
+                       <<"filters_skipped">> => FiltersSkipped, <<"milestones">> => length(Milestones),
+                       <<"detail">> => Detail}};
             {error, _} = E -> E
         end
     catch
@@ -339,6 +382,7 @@ delete_org_data(Org) ->
                           mnesia:index_read(link, Id, #link.from) ++ mnesia:index_read(link, Id, #link.to)),
             mnesia:delete({task, Id})
         end, mnesia:index_read(task, Key, #task.project_key)),
+        lists:foreach(fun(M) -> mnesia:delete_object(M) end, mnesia:index_read(milestone, Key, #milestone.project_key)),
         mnesia:delete({project, Key})
     end, Keys),
     lists:foreach(fun(F) -> mnesia:delete_object(F) end, mnesia:index_read(filter, Org, #filter.org_id)),
@@ -369,6 +413,7 @@ project_in(#{<<"key">> := Key0, <<"name">> := Name} = P) ->
              description = bin(maps:get(<<"description">>, P, <<>>), <<"project description">>),
              task_seq = nat(maps:get(<<"task_seq">>, P, 0), <<"task_seq">>),
              archived = bool(maps:get(<<"archived">>, P, false), <<"archived">>),
+             milestone_seq = nat(maps:get(<<"milestone_seq">>, P, 0), <<"milestone_seq">>),
              created_at = int(maps:get(<<"created_at">>, P, 0), <<"created_at">>),
              updated_at = int(maps:get(<<"updated_at">>, P, 0), <<"updated_at">>)};
 project_in(_) -> bad(<<"a project needs key and name">>).
@@ -389,6 +434,8 @@ task_in(#{<<"id">> := Id, <<"project_key">> := PK, <<"seq">> := Seq, <<"title">>
           assignee = opt_bin(maps:get(<<"assignee">>, T, undefined), <<"assignee">>),
           kind = case maps:get(<<"kind">>, T, <<"task">>) of <<"epic">> -> epic; _ -> task end,
           epic = opt_task_id(maps:get(<<"epic">>, T, undefined), <<"epic">>),
+          milestone = opt_milestone_id(maps:get(<<"milestone">>, T, undefined), PK, Id),
+          milestone_log = [milestone_log_in(E) || E <- list(maps:get(<<"milestone_log">>, T, []), <<"milestone_log">>)],
           created_at = int(maps:get(<<"created_at">>, T, 0), <<"created_at">>),
           updated_at = int(maps:get(<<"updated_at">>, T, 0), <<"updated_at">>)};
 task_in(_) -> bad(<<"a task needs id, project_key, seq and title">>).
@@ -437,6 +484,49 @@ actor_in(#{<<"name">> := Name0} = A) ->
            first_seen = int(maps:get(<<"first_seen">>, A, 0), <<"first_seen">>),
            last_seen = int(maps:get(<<"last_seen">>, A, 0), <<"last_seen">>)};
 actor_in(_) -> bad(<<"an actor needs a name">>).
+
+milestone_log_in(#{<<"at">> := At} = E) ->
+    #{from => opt_bin(maps:get(<<"from">>, E, undefined), <<"milestone_log from">>),
+      to => opt_bin(maps:get(<<"to">>, E, undefined), <<"milestone_log to">>),
+      actor => bin(maps:get(<<"actor">>, E, <<"user">>), <<"milestone_log actor">>),
+      at => int(At, <<"milestone_log at">>),
+      comment => opt_bin(maps:get(<<"comment">>, E, undefined), <<"milestone_log comment">>)};
+milestone_log_in(_) -> bad(<<"a milestone_log entry needs `at`">>).
+
+%% 任务的 milestone 必须是同项目的（id 前缀就是项目 key）
+opt_milestone_id(V, _PK, _TaskId) when V =:= null; V =:= undefined -> undefined;
+opt_milestone_id(V, PK, TaskId) ->
+    case bosun_milestone:parse_id(V) of
+        {ok, V, PK, _} -> V;
+        _ -> bad(<<"task ", TaskId/binary, ": milestone must be a milestone id of ", PK/binary>>)
+    end.
+
+milestone_in(#{<<"id">> := Id, <<"project_key">> := PK, <<"seq">> := Seq, <<"name">> := Name} = M) ->
+    case bosun_milestone:parse_id(Id) of
+        {ok, Id, PK, Seq} -> ok;
+        _ -> bad(<<"milestone id ", (bosun_util:to_binary(Id))/binary, " does not match its project_key / seq">>)
+    end,
+    #milestone{id = Id, project_key = PK, seq = Seq, name = bin(Name, <<"milestone name">>),
+               description = bin(maps:get(<<"description">>, M, <<>>), <<"milestone description">>),
+               status = case maps:get(<<"status">>, M, <<"planning">>) of
+                            <<"planning">> -> planning; <<"active">> -> active; <<"released">> -> released;
+                            S -> bad(<<"bad milestone status ", (bosun_util:to_binary(S))/binary>>)
+                        end,
+               start_date = opt_bin(maps:get(<<"start_date">>, M, undefined), <<"start_date">>),
+               target_date = opt_bin(maps:get(<<"target_date">>, M, undefined), <<"target_date">>),
+               released_at = case maps:get(<<"released_at">>, M, undefined) of
+                                 RA when RA =:= null; RA =:= undefined -> undefined;
+                                 RA -> int(RA, <<"released_at">>)
+                             end,
+               summary = case maps:get(<<"summary">>, M, undefined) of
+                             SM when SM =:= null; SM =:= undefined -> undefined;
+                             SM when is_map(SM) -> SM;
+                             _ -> bad(<<"milestone summary must be an object">>)
+                         end,
+               created_by = bin(maps:get(<<"created_by">>, M, <<"user">>), <<"milestone created_by">>),
+               created_at = int(maps:get(<<"created_at">>, M, 0), <<"created_at">>),
+               updated_at = int(maps:get(<<"updated_at">>, M, 0), <<"updated_at">>)};
+milestone_in(_) -> bad(<<"a milestone needs id, project_key, seq and name">>).
 
 link_in(#{<<"from">> := From0, <<"to">> := To0, <<"type">> := T} = L) ->
     From = task_id(From0, <<"link from">>),

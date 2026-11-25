@@ -15,6 +15,7 @@ import { PriorityIcon, StatusIcon } from '@/features/tasks/StatusIcon';
 import { PRIORITY_LABEL, PRIORITY_TEXT, STATUS_LABEL, transitionLabel } from '@/features/tasks/status';
 import { cn } from '@/lib/utils';
 import { paths } from '@/routes/paths';
+import MilestoneSubMenu from '@/features/milestones/MilestoneSubMenu';
 
 export interface CardProps extends HTMLAttributes<HTMLDivElement> {
   task: TaskSummary;
@@ -96,6 +97,7 @@ const KanbanCard = forwardRef<HTMLDivElement, CardProps>(({ task, showProject, g
               <DropdownMenuLabel className="font-mono text-xs text-muted-foreground">{task.id}</DropdownMenuLabel>
               <DropdownMenuItem onSelect={() => navigate(paths.task(task.id))}><ExternalLink className="size-4" />打开</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => { void copyId(); }}><Copy className="size-4" />复制 ID</DropdownMenuItem>
+              <MilestoneSubMenu task={task} />
               {targets.length > 0 && onMove && (
                 <>
                   <DropdownMenuSeparator />

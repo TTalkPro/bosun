@@ -8,6 +8,7 @@
 %%%       · title · description · text（BM25：标题/正文/标签/反馈）· feedback（BM25：只搜反馈）
 %%%       · created · updated（日期：2026-09-01 / 2026-09-01T10:00 / -7d -2w -3h / now）
 %%%       · question（true = 有待回答的提问）· feedback_count
+%%%       · milestone(fixversion)（名称 / id / active；IS EMPTY = 待规划）· milestone_status（planning / active / released）
 %%% 运算：= != ~ !~ > >= < <= · IN (a, b) · NOT IN (a, b) · IS EMPTY · IS NOT EMPTY
 %%%       · AND OR NOT · 括号 · ORDER BY f [ASC|DESC], ...
 %%% 关键字与字段名不分大小写；值可以裸写（BOS、backend）或加双引号。
@@ -45,7 +46,9 @@
     <<"feedback">> => feedback,
     <<"created">> => created, <<"updated">> => updated,
     <<"question">> => question, <<"open_question">> => question,
-    <<"feedback_count">> => feedback_count
+    <<"feedback_count">> => feedback_count,
+    <<"milestone">> => milestone, <<"fixversion">> => milestone,
+    <<"milestone_status">> => milestone_status
 }).
 
 %% @doc 可用字段（给 UI 的提示面板）。
@@ -204,7 +207,7 @@ parse_cond(Field, _) ->
 %% （以前要到逐条求值才抛，库里有任务时是 500，没任务时又「正常」）
 check_empty(Field) ->
     case lists:member(Field, [labels, assignee, epic, depends_on, blocks, replaces, replaced_by,
-                              description, feedback]) of
+                              description, feedback, milestone]) of
         true -> Field;
         false -> throw({bql, <<"IS EMPTY not supported for ", (atom_to_binary(Field, utf8))/binary>>})
     end.
@@ -299,6 +302,13 @@ coerce(question, Op, V) when Op =:= eq; Op =:= ne ->
         <<"false">> -> false; <<"no">> -> false;
         _ -> throw({bql, <<"question expects true or false">>})
     end;
+%% milestone：名称大小写不敏感地比，id 也转小写比；active 在求值时特判
+coerce(milestone, Op, V) when Op =:= eq; Op =:= ne; Op =:= in -> string:lowercase(bosun_util:trim(V));
+coerce(milestone_status, Op, V) when Op =:= eq; Op =:= ne; Op =:= in ->
+    case string:lowercase(V) of
+        <<"planning">> -> planning; <<"active">> -> active; <<"released">> -> released;
+        _ -> throw({bql, <<"milestone_status expects planning, active or released">>})
+    end;
 coerce(feedback_count, Op, V) when Op =:= eq; Op =:= ne; Op =:= gt; Op =:= gte; Op =:= lt; Op =:= lte ->
     try binary_to_integer(V) catch error:badarg -> throw({bql, <<"feedback_count expects a number">>}) end;
 coerce(Field, Op, _) ->
@@ -355,7 +365,10 @@ prepare(Where) ->
                 Acc#{{Kind, Q} => Scores}
         end
     end, #{}, Conds),
-    #{searches => Searches, feedback => #{}}.
+    %% milestone 很少：一次读全，id → {小写 id, 小写名称, 状态}
+    Ms = maps:from_list([{M#milestone.id, {string:lowercase(M#milestone.id), string:lowercase(M#milestone.name), M#milestone.status}}
+                         || M <- mnesia:dirty_select(milestone, [{'_', [], ['$_']}])]),
+    #{searches => Searches, feedback => #{}, milestones => Ms}.
 
 collect_search({'and', A, B}, Acc) -> collect_search(B, collect_search(A, Acc));
 collect_search({'or', A, B}, Acc) -> collect_search(B, collect_search(A, Acc));
@@ -419,8 +432,28 @@ test(updated, Op, V, T, _) -> cmp_ord(Op, T#task.updated_at, V);
 test(question, Op, V, T, Ctx) -> cmp(Op, open_question(T, Ctx), V);
 test(feedback_count, Op, V, T, Ctx) -> cmp_ord(Op, feedback_count(T, Ctx), V);
 test(feedback, empty, _, T, _) -> T#task.feedback_seq =:= 0;
+test(milestone, empty, _, T, _) -> T#task.milestone =:= undefined;
+test(milestone, eq, V, T, Ctx) -> ms_is(V, T, Ctx);
+test(milestone, ne, V, T, Ctx) -> not ms_is(V, T, Ctx);
+test(milestone, in, Vs, T, Ctx) -> lists:any(fun(V) -> ms_is(V, T, Ctx) end, Vs);
+test(milestone, not_in, Vs, T, Ctx) -> not lists:any(fun(V) -> ms_is(V, T, Ctx) end, Vs);
+test(milestone_status, Op, V, T, Ctx) ->
+    case ms_of(T, Ctx) of
+        undefined -> Op =:= ne orelse Op =:= not_in;
+        {_, _, St} -> cmp(Op, St, V)
+    end;
 test(Field, Op, _, _, _) ->
     throw({bql, <<"operator ", (op_text_any(Op))/binary, " not supported for ", (atom_to_binary(Field, utf8))/binary>>}).
+
+ms_of(#task{milestone = undefined}, _) -> undefined;
+ms_of(#task{milestone = Id}, #{milestones := Ms}) -> maps:get(Id, Ms, undefined).
+
+%% 值是 id、名称，或 active（任务所在项目当前进行中的那个）
+ms_is(V, T, Ctx) ->
+    case ms_of(T, Ctx) of
+        undefined -> false;
+        {IdLc, NameLc, St} -> V =:= IdLc orelse V =:= NameLc orelse (V =:= <<"active">> andalso St =:= active)
+    end.
 
 cmp(eq, A, B) -> A =:= B;
 cmp(ne, A, B) -> A =/= B;
@@ -512,6 +545,7 @@ sort_key(kind, T, _) -> bosun_task:kind_of(T);
 sort_key(blocked, T, _) -> bosun_link:blocked(T#task.id);
 sort_key(epic, T, _) -> case T#task.epic of undefined -> <<>>; E -> E end;
 sort_key(feedback_count, T, Ctx) -> feedback_count(T, Ctx);
+sort_key(milestone, T, Ctx) -> case ms_of(T, Ctx) of undefined -> <<>>; {_, N, _} -> N end;
 sort_key(_, T, _) -> T#task.updated_at.
 
 status_rank(new) -> 1; status_rank(in_progress) -> 2; status_rank(done) -> 3;

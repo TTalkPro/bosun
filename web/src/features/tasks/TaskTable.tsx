@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router';
 import { useState, type ReactNode } from 'react';
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsUpDown, CircleHelp, Copy, ExternalLink, EyeOff, Flag, MoreHorizontal, X } from 'lucide-react';
+import { Milestone as MilestoneIcon, ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronsUpDown, CircleHelp, Copy, ExternalLink, EyeOff, Flag, MoreHorizontal, X } from 'lucide-react';
 import { updateTask } from '@/api/tasks';
 import type { Priority } from '@/api/types';
 import { useSnackbar } from '@/components/notify';
@@ -19,12 +19,14 @@ import ActorChip from '@/components/ActorChip';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { paths } from '@/routes/paths';
+import MilestoneSubMenu from '@/features/milestones/MilestoneSubMenu';
 import { pageWindow, PAGE_SIZES, tableColumns, type ColumnKey } from './columns';
 import { PRIORITY_LABEL, STATUS_LABEL } from './status';
 import { PriorityIcon, StatusIcon } from './StatusIcon';
@@ -53,6 +55,9 @@ interface Props {
   rowActions?: boolean;
   /** 行内改了任务之后（项目列表缓存已由 updateTask 刷新；查询页要自己刷） */
   onRowChanged?: () => unknown;
+  /** 传了就显示勾选列（批量操作用）；勾选状态由调用方保存 */
+  selected?: string[];
+  onSelectedChange?: (ids: string[]) => void;
 }
 
 type SortField = 'id' | 'title' | 'status' | 'priority' | 'assignee' | 'feedback' | 'updated';
@@ -137,6 +142,7 @@ const RowMenu = ({ row, onChanged }: { row: TaskSummary; onChanged?: () => unkno
           <Copy className="size-4" />复制 ID
         </DropdownMenuItem>
         <DropdownMenuSeparator />
+        <MilestoneSubMenu task={row} />
         <DropdownMenuSub>
           <DropdownMenuSubTrigger className="gap-2"><PriorityIcon priority={row.priority} />优先级</DropdownMenuSubTrigger>
           <DropdownMenuSubContent className="w-32">
@@ -153,7 +159,14 @@ const RowMenu = ({ row, onChanged }: { row: TaskSummary; onChanged?: () => unkno
 };
 
 // 任务表格：项目页与查询页共用；分页由调用方维护，这里只发出页码 / 每页行数变化
-const TaskTable = ({ rows, total, loading, page, pageSize, onPageChange, onPageSizeChange, showProject = false, compact = false, hidden = [], sort, onSortChange, onHideColumn, rowActions, onRowChanged }: Props) => {
+const TaskTable = ({ rows, total, loading, page, pageSize, onPageChange, onPageSizeChange, showProject = false, compact = false, hidden = [], sort, onSortChange, onHideColumn, rowActions, onRowChanged, selected, onSelectedChange }: Props) => {
+  const selectable = !!onSelectedChange;
+  const sel = new Set(selected ?? []);
+  const pageIds = rows.map((r) => r.id);
+  const allOnPage = pageIds.length > 0 && pageIds.every((id) => sel.has(id));
+  const someOnPage = pageIds.some((id) => sel.has(id));
+  const toggle = (id: string) => onSelectedChange?.(sel.has(id) ? [...sel].filter((x) => x !== id) : [...sel, id]);
+  const togglePage = () => onSelectedChange?.(allOnPage ? [...sel].filter((x) => !pageIds.includes(x)) : [...new Set([...sel, ...pageIds])]);
   const navigate = useNavigate();
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const showFooter = !(compact && total <= pageSize);
@@ -170,11 +183,17 @@ const TaskTable = ({ rows, total, loading, page, pageSize, onPageChange, onPageS
         <Table>
           <TableHeader className="bg-muted/40">
             <TableRow className="hover:bg-transparent">
+              {selectable && (
+                <TableHead className="w-10 pl-3">
+                  <Checkbox checked={allOnPage ? true : someOnPage ? 'indeterminate' : false} onCheckedChange={togglePage} aria-label="选择本页" />
+                </TableHead>
+              )}
               <Head label="ID" className="w-30" field="id" {...h} />
               {on('project') && <Head label="项目" className="w-22" colKey="project" {...h} />}
               <Head label="标题" className="min-w-60" field="title" {...h} />
               {on('status') && <Head label="状态" className="w-28" field="status" colKey="status" {...h} />}
               {on('priority') && <Head label="优先级" className="w-24" field="priority" colKey="priority" {...h} />}
+              {on('milestone') && <Head label="Milestone" className="w-30" colKey="milestone" {...h} />}
               {on('labels') && <Head label="标签" className="w-45" colKey="labels" {...h} />}
               {on('created_by') && <Head label="提出人" className="w-35" colKey="created_by" {...h} />}
               {on('assignee') && <Head label="执行人" className="w-35" field="assignee" colKey="assignee" {...h} />}
@@ -185,7 +204,12 @@ const TaskTable = ({ rows, total, loading, page, pageSize, onPageChange, onPageS
           </TableHeader>
           <TableBody>
             {rows.map((row) => (
-              <TableRow key={row.id} className="cursor-pointer" onClick={() => navigate(paths.task(row.id))}>
+              <TableRow key={row.id} className="cursor-pointer" data-state={sel.has(row.id) ? 'selected' : undefined} onClick={() => navigate(paths.task(row.id))}>
+                {selectable && (
+                  <TableCell className="pl-3" onClick={(e) => e.stopPropagation()}>
+                    <Checkbox checked={sel.has(row.id)} onCheckedChange={() => toggle(row.id)} aria-label={`选择 ${row.id}`} />
+                  </TableCell>
+                )}
                 <TableCell><TaskIdChip id={row.id} /></TableCell>
                 {on('project') && <TableCell className="font-mono text-xs">{row.project_key}</TableCell>}
                 <TableCell>
@@ -204,6 +228,13 @@ const TaskTable = ({ rows, total, loading, page, pageSize, onPageChange, onPageS
                 </TableCell>
                 {on('status') && <TableCell><span className="inline-flex items-center gap-1.5 text-sm font-medium"><StatusIcon status={row.status} />{STATUS_LABEL[row.status]}</span></TableCell>}
                 {on('priority') && <TableCell><span className="inline-flex items-center gap-1.5 text-sm"><PriorityIcon priority={row.priority} />{PRIORITY_LABEL[row.priority]}</span></TableCell>}
+                {on('milestone') && (
+                  <TableCell>
+                    {row.milestone_name
+                      ? <span className="inline-flex max-w-28 items-center gap-1 truncate text-sm"><MilestoneIcon className="size-3.5 shrink-0 text-muted-foreground" />{row.milestone_name}</span>
+                      : <span className="text-xs text-muted-foreground/70">—</span>}
+                  </TableCell>
+                )}
                 {on('labels') && (
                   <TableCell>
                     <div className="flex max-w-44 gap-1 overflow-hidden">

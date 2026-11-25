@@ -33,6 +33,8 @@ op     := = | != | ~ | !~ | > | >= | < | <=
 | `created` `updated` | > >= < <= | `2026-09-01`、`2026-09-01T10:00`、`now`、`-7d -2w -12h -30m` |
 | `question` | = != | true = 最新有效反馈是未回答的提问 |
 | `feedback_count` | = != > >= < <= | 有效条数（修订作废的不算），与任务摘要同口径 |
+| `milestone`（`fixversion`） | = != IN IS EMPTY | 名称或 id；`active` = 所在项目进行中的；`IS EMPTY` = 待规划（14） |
+| `milestone_status` | = != IN | planning / active / released |
 
 缺省排序：有全文条件时按相关度，否则 `updated DESC`。
 

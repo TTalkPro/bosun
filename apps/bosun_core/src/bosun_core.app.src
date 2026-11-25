@@ -1,6 +1,6 @@
 {application, bosun_core, [
     {description, "Bosun domain layer: projects, tasks, status workflow, feedback, search, BQL"},
-    {vsn, "0.1.3"},
+    {vsn, "0.1.4"},
     {registered, [bosun_core_sup, bosun_search, bosun_rate_limit]},
     {mod, {bosun_core_app, []}},
     %% mnesia 不在这里：由 bosun_store:init/0 设好目录后再启动（release 里 {mnesia, load}）

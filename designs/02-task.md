@@ -15,11 +15,13 @@
     created_at, updated_at,
     assignee     :: binary() | undefined, %% 执行方（见 03 §6）
     kind         :: task | epic | undefined, %% Epic 就是一种任务；undefined（旧数据）视为 task
-    epic         :: binary() | undefined   %% 所属 Epic 的任务 id，可跨项目；Epic 自己不能有
+    epic         :: binary() | undefined,  %% 所属 Epic 的任务 id，可跨项目；Epic 自己不能有
+    milestone    :: binary() | undefined,  %% 所属 milestone（14），同项目；undefined = 待规划
+    milestone_log :: [map()] | undefined   %% 归属变更记录 #{from, to, actor, at, comment}（14 D7）
 }).
 ```
 
-对外 JSON：摘要（列表）= `id project_key seq title status priority labels created_by created_by_kind assignee assignee_kind commits kind epic progress feedback_count open_question created_at updated_at`；详情 = 摘要 + `description history feedback`，Epic 再加 `children`（步骤摘要，按 id 序），普通任务加 `epic_title`。`created_by` 取自 history 首条 actor；`*_kind` 查 actor 表（见 11）；`commits` 是所有历史条目的提交 hash 去重后按时间排序；`feedback_count` / `open_question` 只算有效（未作废）反馈。
+对外 JSON：摘要（列表）= `id project_key seq title status priority labels created_by created_by_kind assignee assignee_kind commits kind epic milestone milestone_name progress blocked feedback_count open_question created_at updated_at`；详情 = 摘要 + `description history feedback links milestone_log`，Epic 再加 `children`（步骤摘要，按 id 序），普通任务加 `epic_title`。`created_by` 取自 history 首条 actor；`*_kind` 查 actor 表（见 11）；`commits` 是所有历史条目的提交 hash 去重后按时间排序；`feedback_count` / `open_question` 只算有效（未作废）反馈。
 
 ### Epic
 
@@ -33,21 +35,21 @@ Epic 是 `kind = epic` 的任务：一个整体目标，普通任务通过 `epic
 
 ## 2. 领域 API（`bosun_task`）
 
-`create/2`、`get/1`（含内嵌 feedback）、`list/2`（status / label / q / limit / offset；`q` 走 BM25 再补 ID 子串，见 08）、`update/2`（title / description / priority / labels；status 被忽略）、`search/2`（跨项目 BM25，按任务聚合）、`find_by_ids/1`。
+`create/2`、`get/1`（含内嵌 feedback）、`list/2`（status / label / q / kind / epic / priority / assignee / attention / milestone / sort / limit / offset；`q` 走 BM25 再补 ID 子串，见 08；milestone 取 id / 名称 / `active` / `backlog`，见 14）、`update/2`（title / description / priority / labels / assignee / epic / milestone + milestone_comment；status 被忽略）、`search/2`（跨项目 BM25，按任务聚合）、`find_by_ids/1`。
 
 ## 3. REST
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/v1/projects/:key/tasks?status=&q=&limit=&offset=` | 摘要列表 `{tasks, total}` |
+| GET | `/api/v1/projects/:key/tasks?status=&q=&kind=&epic=&priority=&assignee=&attention=&milestone=&sort=&limit=&offset=` | 摘要列表 `{tasks, total}` |
 | POST | `/api/v1/projects/:key/tasks` | 201 task（409 archived） |
 | GET / PATCH | `/api/v1/tasks/:id` | 详情 / 改字段 |
 | GET | `/api/v1/search?q=&project=&limit=` | 全文检索 |
 
 ## 4. MCP 工具
 
-`list_tasks(project_key, status?, label?, query?, limit?, offset?)` · `search_tasks(query, project_key?, limit?)` · `get_task(task_id)` · `create_task(project_key, title, description?, priority?, labels?, actor?)` · `update_task(task_id, …)`。改状态请用 `transition_task`（03）。
+`list_tasks(project_key, status?, label?, kind?, epic?, milestone?, query?, limit?, offset?)` · `search_tasks(query, project_key?, limit?)` · `get_task(task_id)` · `create_task(project_key, title, description?, priority?, labels?, assignee?, kind?, epic?, milestone?)` · `update_task(task_id, …, milestone?, milestone_comment?)`。改状态请用 `transition_task`（03）；milestone 本身的工具见 14。
 
 ## 5. 前端
 
-`/projects/:key`：状态 chip 多选 + 一个搜索框（同步到 URL）、DataGrid（ID / 标题 / 状态 / 优先级 / 标签 / 提出人 / 反馈 / 更新）、右侧面板新建任务。`/tasks/:id`：ID + 行内编辑标题、状态与迁移按钮、优先级 / 标签、描述（只读渲染 ↔ Milkdown 编辑）、状态历史时间线、Feedback 线索。
+`/projects/:key`：milestone 范围 + 看板 / 列表（见 07、14）；列表是 shadcn Table（ID / 标题 / 状态 / 优先级 / Milestone / 标签 / 提出人 / 执行人 / 反馈 / 更新，可显隐、排序、分页、勾选批量）；右侧面板新建任务（两栏：标题 / 描述 + 属性栏，可「创建后继续新建」）。`/tasks/:id`：页头（编号、状态、优先级、Milestone、阻塞 / 待回答）与迁移按钮、提示条、进度卡片、描述（只读渲染 ↔ Milkdown 编辑）、动态流（状态变化 + Milestone 变更 + Feedback）、右栏属性 / 关联 / 交付。

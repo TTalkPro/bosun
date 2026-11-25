@@ -39,8 +39,86 @@ export interface Project {
   description: string;
   task_count: number;
   archived: boolean;
+  /** 当前进行中的 milestone（14）；没有为 null */
+  active_milestone: { id: string; name: string; percent: number; target_date: string | null } | null;
   created_at: string;
   updated_at: string;
+}
+
+export type MilestoneStatus = 'planning' | 'active' | 'released';
+
+/** 进度口径（14 §3）：scope 不含 Epic 与已拒绝 / 已撤销；done = 已完成 + 已验收 */
+export interface MilestoneCounts {
+  total: number;
+  scope: number;
+  open: number;
+  in_progress: number;
+  done: number;
+  verified: number;
+  pending_verify: number;
+  rejected: number;
+  cancelled: number;
+  percent: number;
+  epics: number;
+  epics_done: number;
+}
+
+export interface MilestoneSummary {
+  released_by: string;
+  counts: Record<'delivered' | 'verified' | 'pending_verify' | 'rejected' | 'cancelled' | 'carried_over', number>;
+  delivered: string[];
+  epics: string[];
+  pending_verify: string[];
+  carried_over: string[];
+  carried_to: string;
+  /** 发布时目标 milestone 的名称（快照） */
+  carried_to_name?: string | null;
+  notes: string | null;
+}
+
+export interface MilestoneChange {
+  task: string;
+  title: string;
+  kind: TaskKind;
+  status: Status;
+  direction: 'in' | 'out';
+  from: string | null;
+  to: string | null;
+  from_name: string | null;
+  to_name: string | null;
+  actor: string;
+  comment: string | null;
+  at: string;
+}
+
+export interface Milestone {
+  id: string;
+  project_key: string;
+  seq: number;
+  name: string;
+  description: string;
+  status: MilestoneStatus;
+  start_date: string | null;
+  target_date: string | null;
+  released_at: string | null;
+  summary: MilestoneSummary | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  counts: MilestoneCounts;
+  /** 只有详情接口带 */
+  changes?: MilestoneChange[];
+}
+
+/** 任务的 milestone 归属变更（14 D7） */
+export interface MilestoneLogEntry {
+  from: string | null;
+  from_name: string | null;
+  to: string | null;
+  to_name: string | null;
+  actor: string;
+  comment: string | null;
+  at: string;
 }
 
 export interface TestEvidence {
@@ -94,6 +172,9 @@ export interface TaskSummary {
   kind: TaskKind;
   /** 所属 Epic 的任务 id（可跨项目） */
   epic: string | null;
+  /** 所属 milestone（14）；null = 待规划 */
+  milestone: string | null;
+  milestone_name: string | null;
   /** 仅 Epic 有 */
   progress: EpicProgress | null;
   /** 有未完成（非 DONE / VERIFIED）的 depends_on 目标 */
@@ -113,6 +194,7 @@ export interface Task extends TaskSummary {
   /** 所属 Epic 的标题（仅普通任务且已挂 Epic） */
   epic_title?: string | null;
   links: TaskLink[];
+  milestone_log: MilestoneLogEntry[];
 }
 
 export interface TaskListResponse {
@@ -130,6 +212,8 @@ export interface TaskFilter {
   assignee?: string[];
   /** 只要被阻塞或有提问待回答的 */
   attention?: boolean;
+  /** milestone id / 名称 / active / backlog（未排期） */
+  milestone?: string;
   /** field[:asc|desc]；field ∈ id / title / status / priority / assignee / feedback / updated / created */
   sort?: string;
   limit?: number;

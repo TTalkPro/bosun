@@ -10,7 +10,7 @@
 claude mcp add --transport http bosun http://127.0.0.1:4000/mcp
 ```
 
-## 2. 工具目录（22）
+## 2. 工具目录（28）
 
 | 工具 | 来源 |
 |---|---|
@@ -19,6 +19,7 @@ claude mcp add --transport http bosun http://127.0.0.1:4000/mcp
 | `list_tasks` `search_tasks` `get_task` `create_task` `update_task` | 02 / 08 |
 | `transition_task` | 03 |
 | `link_tasks` `unlink_tasks` | 12 |
+| `list_milestones` `get_milestone`（read）· `assign_milestone`（write）· `create_milestone` `update_milestone` `transition_milestone`（manage） | 14 |
 | `add_feedback` `update_feedback` `list_feedback` | 04 |
 | `query_tasks` `list_filters` `save_filter` `delete_filter` | 09 |
 

@@ -83,6 +83,17 @@ NEW ──→ IN_PROGRESS ──→ DONE ──→ VERIFIED
 - **替代** `link_tasks(from=A, to=B, type="replaces")`：A 接手 B。B 若还在 NEW / IN_PROGRESS 会自动撤销，历史里记 `replaced by A`——所以「这个需求换个做法」不用手动撤销旧单，建新单再建替代链即可。
 - 链可删（`unlink_tasks`），删链不改状态。BQL：`blocked = true`、`depends_on = KEY-N`、`blocks = KEY-N`、`replaces = KEY-N`、`replaced_by = KEY-N`。
 
+## 4d. Milestone（发布范围）
+
+一次发布先规划一组任务作为 milestone（如 `0.1.4`），每个项目**同时只有一个进行中**的 milestone，那就是「当前发布」。一次发布可以包含若干 Epic 和若干独立任务。
+
+- **找活**：`list_milestones(project_key)` 看当前进行中的那个，`list_tasks(project_key, milestone="active")` 列它的任务。没有特别指派时优先做当前 milestone 里的；`work_on_task` 提示里也会说明任务在不在当前发布里。
+- **排期**：建单时 `create_task(..., milestone="0.1.4")`（id、名称或 `"active"` 都行），或 `update_task(id, milestone=...)`；一批任务用 `assign_milestone(project_key, task_ids, milestone)`。不给就在待规划（backlog）。Epic 也可以排进去：它还没做完的步骤会跟着走；Epic 下新建的步骤不指定时跟 Epic 进同一个。
+- **移出要说原因**：这次做不完、挪到下一个时 `update_task(id, milestone="0.2", milestone_comment="这次来不及")`（或 `assign_milestone(..., comment=...)`）。每次移入 / 移出都记进任务的 `milestone_log`，`get_milestone` 的 `changes` 列出这次发布的范围变化。
+- **规则**：已发布的 milestone 不能再加任务（可以移出）；完成率 = 已完成（DONE + VERIFIED）/ 范围（不含 Epic、已拒绝、已撤销）。
+- **发布**（需要 `manage`）：`transition_milestone(id, "release", carry_over="0.2", notes="...")`。新建 / 进行中的任务按 `carry_over` 挪到别的 milestone 或退回待规划（`"backlog"`）；已完成未验收的留下算交付，之后照常验收。其它状态操作：`activate`（开始）、`pause`（回到规划中）、`reopen`（重新打开已发布的）。
+- BQL：`milestone = "0.1.4"`、`milestone = active`、`milestone IS EMPTY`（待规划）、`milestone_status = released`。
+
 ## 5. 反馈
 
 四种 `kind`：

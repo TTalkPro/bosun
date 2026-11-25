@@ -3,6 +3,7 @@ import AuthGate from '@/components/AuthGate';
 import MainLayout from '@/layouts/MainLayout';
 import ProjectsPage from '@/pages/ProjectsPage';
 import ProjectTasksPage from '@/pages/ProjectTasksPage';
+import MilestonesPage from '@/pages/MilestonesPage';
 import TaskDetailPage from '@/pages/TaskDetailPage';
 import NotFoundPage from '@/pages/NotFoundPage';
 import QueryPage from '@/pages/QueryPage';
@@ -26,6 +27,7 @@ const router = createBrowserRouter([
           { index: true, element: <Navigate to="/projects" replace /> },
           { path: 'projects', element: <ProjectsPage /> },
           { path: 'projects/:key', element: <ProjectTasksPage /> },
+          { path: 'projects/:key/milestones', element: <MilestonesPage /> },
           { path: 'tasks/:id', element: <TaskDetailPage /> },
           { path: 'query', element: <QueryPage /> },
           { path: 'data', element: <DataPage /> },

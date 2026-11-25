@@ -1,5 +1,6 @@
 %%%-------------------------------------------------------------------
-%%% @doc GET /api/v1/stats?days=14&tz=480[&project=KEY] —— 项目总览统计（bosun_stats:overview/1）。
+%%% @doc GET /api/v1/stats?days=14&tz=480[&project=KEY][&milestone=ID] —— 项目总览统计（bosun_stats:overview/1）；
+%%% 带 milestone 时是该 milestone 的统计与燃尽（bosun_stats:milestone/2）。
 %%% 给了 project 只统计该项目（看不到的项目 404）。
 %%% tz：时区偏移分钟数，东正西负（JS 里是 -new Date().getTimezoneOffset()）。
 %%%-------------------------------------------------------------------
@@ -19,7 +20,11 @@ init(Req0, State) ->
                              <<>> -> Opts0;
                              Key -> Opts0#{project => Key}
                          end,
-                  reply_result(200, bosun_stats:overview(Opts), Req0);
+                  %% milestone=ID：这个 milestone 的统计与燃尽（14 §5）；project 可同时给，不影响
+                  case maps:get(<<"milestone">>, Q, <<>>) of
+                      <<>> -> reply_result(200, bosun_stats:overview(Opts), Req0);
+                      Mid -> reply_result(200, bosun_stats:milestone(Mid, Opts), Req0)
+                  end;
               _ ->
                   method_not_allowed(Req0, <<"GET">>)
           end,

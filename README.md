@@ -1,25 +1,43 @@
 # Bosun
 
-面向「人 + Agent」协作的轻量任务管理系统。
+面向「人 + Agent」协作的轻量任务管理系统：人用网页，AI Agent 经 MCP 接入，两边看到的是同一份任务、同一套规则（领取、完成要带提交与测试证据、验收、反馈提问）。
 
 - 后端：Erlang/OTP 28，rebar3 umbrella，Mnesia 存储
 - 前端：React 19 + shadcn/ui + Tailwind CSS，Milkdown 编辑器，GFM + Mermaid 渲染
-- 接口：REST（前端）+ MCP（Agent，基于 [beamai_extra](https://github.com/TTalkPro/beamai_extra) 的 `beamai_mcp`）
+- 接口：REST（前端 / 脚本）+ MCP（Agent，基于 [beamai_extra](https://github.com/TTalkPro/beamai_extra) 的 `beamai_mcp`）
 - 检索：[bitcask](https://github.com/DavidAlphaFox/bitcask) BM25 + jieba 分词（纯索引，可随时从 Mnesia 重建）
+
+完整功能见 **[功能列表](docs/FEATURES.md)**，版本变化见 **[CHANGELOG](CHANGELOG.md)**，Agent 协作规则见 [AGENT-WORKFLOW](docs/AGENT-WORKFLOW.md)。
+
+## 截图
+
+**项目看板**：按 milestone（发布范围）看板，页头是这次发布的进度与燃尽图，侧栏显示各项目进行中的 milestone。
+
+![项目看板](docs/screenshots/board.png)
+
+| | |
+|---|---|
+| ![Milestone 管理](docs/screenshots/milestones.png) **Milestone 管理**：进行中置顶，规划中按目标日期，已发布折叠 | ![发布面板](docs/screenshots/release.png) **发布**：交付 / 待验收 / 没做完的去向，按 Epic 分组的发布说明 |
+| ![任务详情](docs/screenshots/task.png) **任务详情**：进度、动态流（状态 / Milestone 变更 / 反馈）、交付证据 | ![待回答提问](docs/screenshots/task-question.png) **提醒**：有提问待回答、被依赖阻塞时的提示条 |
+| ![任务列表](docs/screenshots/list.png) **列表**：全部任务、Milestone 列、勾选批量排期 | ![BQL 查询](docs/screenshots/query.png) **BQL 查询**：高亮与补全、结果概览、导出 CSV |
+| ![项目总览（深色）](docs/screenshots/projects-dark.png) **项目总览**（深色主题） | ![项目看板（深色）](docs/screenshots/board-dark.png) **项目看板**（深色主题） |
+
+截图用的是演示数据（组织 Acme）。
 
 ## 功能
 
-1. 多项目管理（Key 成为任务 ID 前缀）
-2. 项目内任务，ID 自动分配：`BOS-12`
-2b. Epic：`kind = epic` 的任务作为整体目标，普通任务用 `epic` 挂上去作为步骤，进度按已完成（DONE / VERIFIED）步骤数派生；步骤全部完成后 Epic 自动置为 DONE
-2c. 任务关联：`replaces`（替代，对方自动撤销）/ `depends_on`（依赖，对方没做完不能开始，成环拒绝）
-3. 任务状态 `NEW → IN_PROGRESS → DONE → VERIFIED`（可打回 / 重开；执行方可 `REJECTED`，提出方重新提交；不需要了可 `CANCELLED`，可恢复）
-4. 任务 Feedback（不可变；作者可修订 = 新版本 + 旧版本作废，线索完整；`comment / review / question / answer`）
-5. 组织与用户：任何人可注册组织（邮箱验证码），注册人是管理员，组织内用户由管理员分配；项目归属组织，各组织互相看不到；Web 登录会话，MCP 用每个用户自己建的 API key（见 [designs/13](designs/13-org-auth.md)）
-6. Milkdown 编辑器，GitHub 风格 Markdown 渲染，Mermaid 图
-7. 全文检索：标题 / 正文 / 标签 / Feedback，中英文，跨项目
-8. [BQL](docs/BQL.md)（JQL 风格）跨项目查询 + 可保存的筛选器
-9. 按组织的 JSON 导出 / 导入（`/data` 页或 `scripts/export.sh` `scripts/import.sh`，见下文「备份与迁移」）
+概览（逐项说明见 [docs/FEATURES.md](docs/FEATURES.md)）：
+
+1. **组织与账号**：注册组织（邮箱验证码），注册人是管理员；组织之间完全隔离；Web 登录会话，Agent / 脚本用每个用户自己建的 API key（`read` / `write` / `manage`、项目白名单、可轮换）（[设计 13](designs/13-org-auth.md)）
+2. **项目与任务**：项目 Key 成为任务编号前缀（`BOS-12`）；优先级、标签、执行人、Markdown 描述（Milkdown，GFM + Mermaid）
+3. **状态与验收**：`新建 → 进行中 → 已完成 → 已验收`，可打回 / 重开；执行方可拒绝、提出方重新提交；不需要了可撤销、可恢复；完成带提交与测试证据，执行方自己验收必须有通过的测试
+4. **反馈**：说明 / 评审 / 提问 / 回答，不可变（修订 = 新版本 + 旧版本作废）
+5. **Epic 与关联**：Epic 是整体目标，步骤挂上去、进度自动派生；任务之间「依赖」（没做完不能开始）与「替代」（对方自动撤销）
+6. **Milestone（发布范围）**：每次发布先规划一组任务（可含若干 Epic 与独立任务），每个项目同时一个进行中，看板只看这一个；移入 / 移出都留痕；发布时没做完的结转到下一个或退回待规划，自动生成按 Epic 分组的发布说明；燃尽图（[设计 14](designs/14-milestone.md)）
+7. **看板与列表**：拖拽改状态（含触屏 / 键盘）、工具条筛选与排序；列表列显隐、排序、分页、批量排期；统计卡片与每日动态
+8. **检索与 [BQL](docs/BQL.md)**：中英文全文检索；JQL 风格的跨项目查询、可保存的筛选器
+9. **Agent 接入（MCP）**：28 个工具、3 个资源、`work_on_task` 提示，错误信息告诉 Agent 下一步怎么做
+10. **导入导出**：按组织的 JSON 导出 / 导入（合并 / 替换，导入前可预演），见下文「备份与迁移」
 
 ## 运行
 
@@ -136,7 +154,7 @@ claude mcp add --transport http --scope user bosun http://127.0.0.1:5000/mcp \
 
 `claude mcp list` 能看到 bosun 即可；没有 key 或 key 被撤销时 `/mcp` 回 401。建议在该仓库的 `CLAUDE.md` 里写一句「本项目的任务在 Bosun 项目 `KEEL` 里；调用 bosun 工具时 actor/author 用 `keel`；开工前 `transition_task` 到 IN_PROGRESS，完成后 `add_feedback` 再置 DONE 并带上 `commits` / `tests`」——完整规则见 [`docs/AGENT-WORKFLOW.md`](docs/AGENT-WORKFLOW.md)（可在其他仓库的 `CLAUDE.md` 里用 `@~/workspace/bosun/docs/AGENT-WORKFLOW.md` 引用），MCP 资源 `bosun://workflow` 返回其英文版。也可以直接用提示 `/bosun:work_on_task KEEL-1` 把任务全文拉进上下文。
 
-工具（22）：`identify` `whoami` `list_actors` `list_projects` `get_project` `create_project` `update_project` `list_tasks` `search_tasks` `get_task` `create_task` `update_task` `transition_task` `link_tasks` `unlink_tasks` `add_feedback` `update_feedback` `list_feedback` `query_tasks` `list_filters` `save_filter` `delete_filter`；资源 `bosun://projects`、`bosun://workflow`、`bosun://bql`；提示 `work_on_task`。
+工具（28）：`identify` `whoami` `list_actors` `list_projects` `get_project` `create_project` `update_project` `list_tasks` `search_tasks` `get_task` `create_task` `update_task` `transition_task` `link_tasks` `unlink_tasks` `list_milestones` `get_milestone` `create_milestone` `update_milestone` `transition_milestone` `assign_milestone` `add_feedback` `update_feedback` `list_feedback` `query_tasks` `list_filters` `save_filter` `delete_filter`；资源 `bosun://projects`、`bosun://workflow`、`bosun://bql`；提示 `work_on_task`。
 
 ## REST
 
@@ -152,12 +170,15 @@ claude mcp add --transport http --scope user bosun http://127.0.0.1:5000/mcp \
 | GET | `/api/v1/actors` |
 | GET | `/api/v1/workflow.md?lang=zh\|en`（协作工作流文档，`text/markdown`） |
 | GET | `/api/v1/search?q=&project=&limit=` |
+| GET | `/api/v1/stats?days=&tz=&project=`（项目统计）；`/api/v1/stats?milestone=<id>&tz=`（某个 milestone 的计数与燃尽） |
 | GET | `/api/v1/query?q=<BQL>&limit=&offset=` |
 | GET / POST | `/api/v1/filters`；GET / PATCH / DELETE `/api/v1/filters/:id`；GET `/api/v1/filters/:id/run` |
 | GET / POST | `/api/v1/export`、`/api/v1/import?mode=merge\|replace`（admin；只含本组织） |
 | GET / POST | `/api/v1/projects` |
 | GET / PATCH | `/api/v1/projects/:key` |
-| GET / POST | `/api/v1/projects/:key/tasks` |
+| GET / POST | `/api/v1/projects/:key/tasks`（GET 可带 `milestone=<id\|名称\|active\|backlog>`） |
+| GET / POST | `/api/v1/projects/:key/milestones`；GET / PATCH / DELETE `/api/v1/milestones/:id`（GET 带 `changes` 范围变更）；POST `/api/v1/milestones/:id/activate\|pause\|reopen\|release`（release：`{carry_over, notes}`） |
+| POST | `/api/v1/projects/:key/tasks/milestone`（`{ids, milestone, comment}` 批量设置归属；key 需 `write`，milestone 本身的增删改要 `manage`） |
 | GET / PATCH | `/api/v1/tasks/:id` |
 | POST / DELETE | `/api/v1/tasks/:id/links`、`/api/v1/tasks/:id/links/:type/:to`（`replaces` / `depends_on`） |
 | POST | `/api/v1/tasks/:id/transition`（`to comment commits[] tests{command,passed,summary}`；署名 = 登录用户；执行方自验收需通过的测试 → 409 `self_verify_requires_tests`） |
@@ -167,7 +188,7 @@ claude mcp add --transport http --scope user bosun http://127.0.0.1:5000/mcp \
 ## 测试
 
 ```bash
-rebar3 eunit          # 领域层 + BQL + 备份 + MCP 工具
+rebar3 eunit          # 领域层 + BQL + 备份 + Milestone + MCP 工具
 rebar3 ct             # REST + MCP 端到端（真实 cowboy）
 rebar3 check          # xref + dialyzer + eunit + ct
 cd web && pnpm test   # vitest
@@ -176,9 +197,9 @@ cd web && pnpm lint   # eslint（typescript-eslint + react-hooks + react-refresh
 
 ## 设计文档
 
-见 [designs/](designs/)：[总体](designs/00-overview.md) · [项目](designs/01-project.md) · [任务](designs/02-task.md) · [状态](designs/03-task-status.md) · [Feedback](designs/04-feedback.md) · [MCP](designs/05-mcp-server.md) · [Markdown](designs/06-markdown-editor.md) · [前端](designs/07-web-app.md) · [检索](designs/08-search.md) · [BQL](designs/09-bql.md) · [备份](designs/10-backup.md) · [身份](designs/11-identity.md) · [关联](designs/12-link.md) · [组织与认证](designs/13-org-auth.md)
+见 [designs/](designs/)：[总体](designs/00-overview.md) · [项目](designs/01-project.md) · [任务](designs/02-task.md) · [状态](designs/03-task-status.md) · [Feedback](designs/04-feedback.md) · [MCP](designs/05-mcp-server.md) · [Markdown](designs/06-markdown-editor.md) · [前端](designs/07-web-app.md) · [检索](designs/08-search.md) · [BQL](designs/09-bql.md) · [备份](designs/10-backup.md) · [身份](designs/11-identity.md) · [关联](designs/12-link.md) · [组织与认证](designs/13-org-auth.md) · [Milestone](designs/14-milestone.md)
 
-任务清单见 [TASK.md](TASK.md)。
+任务清单见 [TASK.md](TASK.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 许可证
 

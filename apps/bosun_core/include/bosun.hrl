@@ -10,7 +10,8 @@
     archived    :: boolean(),
     created_at  :: integer(),
     updated_at  :: integer(),
-    org_id      :: binary() | undefined  %% 所属组织（13）；undefined = 升级前的孤儿项目，任何组织都看不到
+    org_id      :: binary() | undefined,  %% 所属组织（13）；undefined = 升级前的孤儿项目，任何组织都看不到
+    milestone_seq :: non_neg_integer() | undefined  %% milestone 序号（14）；undefined（旧数据）= 0
 }).
 
 -record(task, {
@@ -28,7 +29,10 @@
     updated_at   :: integer(),
     assignee     :: binary() | undefined,  %% 执行方：领取（→ IN_PROGRESS）时写入，建单可预派
     kind         :: task | epic | undefined,  %% undefined（旧数据）视为 task
-    epic         :: binary() | undefined   %% 所属 Epic 的任务 id（可跨项目）；Epic 自己不能有
+    epic         :: binary() | undefined,  %% 所属 Epic 的任务 id（可跨项目）；Epic 自己不能有
+    milestone    :: binary() | undefined,  %% 所属 milestone id（14，同项目）；undefined = 待规划
+    %% milestone 变更记录（14 §3.3）：#{from, to, actor, at, comment}，旧的在前；undefined（旧数据）= []
+    milestone_log :: [map()] | undefined
 }).
 
 %% Feedback 不可变：「编辑」= 追加一条新的（supersedes 指向旧条），旧条标记为
@@ -141,4 +145,21 @@
     expires_at :: integer(),
     attempts   :: non_neg_integer(),
     sent_at    :: integer()
+}).
+
+%% Milestone（14）：一次发布的任务范围。id = <<"BOS-M3">>（项目内序号，见 project.milestone_seq）。
+-record(milestone, {
+    id           :: binary(),
+    project_key  :: binary(),
+    seq          :: pos_integer(),
+    name         :: binary(),                 %% 项目内唯一
+    description  :: binary(),
+    status       :: planning | active | released,
+    start_date   :: binary() | undefined,     %% <<"2026-12-01">>
+    target_date  :: binary() | undefined,
+    released_at  :: integer() | undefined,    %% 毫秒
+    summary      :: map() | undefined,        %% 发布时的快照（binary 键，原样进 JSON）
+    created_by   :: binary(),
+    created_at   :: integer(),
+    updated_at   :: integer()
 }).

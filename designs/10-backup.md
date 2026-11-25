@@ -4,7 +4,7 @@
 
 ## 格式
 
-`{"format":"bosun-export","version":2,"exported_at","projects","tasks","feedback","filters","counters"}`，内部形态（毫秒时间、序号计数器），往返无损。`bosun_backup:export/0` `export_file/1` `import/2` `import_file/2`。
+`{"format":"bosun-export","version":3,"exported_at","projects","tasks","feedback","filters","actors","links","milestones","counters"}`（3 起有 `milestones`、任务的 `milestone` / `milestone_log`、项目的 `milestone_seq`；1、2 照样能导入，见 14 §4.6），内部形态（毫秒时间、序号计数器），往返无损。`bosun_backup:export/0` `export_file/1` `import/2` `import_file/2`。
 
 ## 模式
 
