@@ -99,6 +99,10 @@ error_to_http({milestone_state, Status, Action}) ->
             <<"message">> => <<"cannot ", (atom_to_binary(Action, utf8))/binary, " a ",
                                (atom_to_binary(Status, utf8))/binary, " milestone">>,
             <<"detail">> => #{<<"status">> => atom_to_binary(Status, utf8), <<"action">> => atom_to_binary(Action, utf8)}}};
+error_to_http({unfinished, Ids}) ->
+    {409, #{<<"error">> => <<"unfinished">>,
+            <<"message">> => <<(integer_to_binary(length(Ids)))/binary, " task(s) are not finished; finish them or move them out of the milestone before releasing">>,
+            <<"detail">> => #{<<"tasks">> => Ids}}};
 error_to_http(not_empty) ->
     {409, #{<<"error">> => <<"not_empty">>, <<"message">> => <<"the milestone still has tasks; move them out first">>}};
 error_to_http({conflict, Field}) ->

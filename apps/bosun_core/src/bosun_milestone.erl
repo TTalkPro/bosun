@@ -8,7 +8,7 @@
 %%% - 任务的归属在 `task.milestone'；校验（同项目、不能加进已发布的）在 `resolve_in_tx/2'，
 %%%   bosun_task 的建单 / 修改都走它。Epic 也可以进（一次发布 = 若干 Epic + 若干独立任务），
 %%%   Epic 换 milestone 时没做完的步骤跟着走（bosun_task 里做）。
-%%% - 每次归属变化都记进 `task.milestone_log'（移入 / 移出 / 发布结转 / 跟随 Epic），
+%%% - 每次归属变化都记进 `task.milestone_log'（移入 / 移出 / 跟随 Epic），
 %%%   milestone 详情据此列出「范围变更」。
 %%%-------------------------------------------------------------------
 -module(bosun_milestone).
@@ -163,67 +163,58 @@ to_active(Id0, From, Action) ->
     end),
     map_result(Res).
 
-%% @doc 发布（只能从 active）。Opts: #{carry_over => <<"backlog">> | MilestoneId（缺省 backlog）,
-%% notes => Markdown, actor}。
-%% NEW / IN_PROGRESS 的任务按 carry_over 挪走；DONE（未验收）留下算交付，记进 pending_verify。
-%% 一个事务里写完任务归属与快照 summary。
+%% @doc 发布（只能从 active）= 这次发布的验收。Opts: #{notes => Markdown, actor}。
+%%
+%% - 范围里还有没做完的（NEW / IN_PROGRESS，Epic 也算）→ 拒绝 {unfinished, [Id]}：先完成或移出（用户定，2026-11-25）；
+%% - 已完成（DONE）的一律置为已验收（VERIFIED），历史记「随 <名称> 发布验收」——发布本身就是验收，
+%%   不走执行方自验收要测试的那条检查，否则自己做的任务会把整个发布卡住；
+%% - 已拒绝 / 已撤销的留在里面，不挡发布，记进快照；
+%% - 一个事务里写完状态与快照 summary，提交后重建这些任务（及其 Epic）的索引。
 -spec release(term(), map()) -> {ok, map()} | {error, term()}.
 release(Id0, Opts) when is_map(Opts) ->
     Actor = actor(Opts),
     Res = bosun_store:transaction(fun() ->
         M = read_tx(Id0),
         M#milestone.status =:= active orelse bosun_store:abort({milestone_state, M#milestone.status, release}),
-        Target = carry_target_in_tx(M, maps:get(<<"carry_over">>, Opts, <<"backlog">>)),
-        Now = bosun_util:now_ms(),
         Tasks = sort_tasks(mnesia:index_read(task, M#milestone.id, #task.milestone)),
-        {Carry, Stay} = lists:partition(fun(#task{status = S}) -> S =:= new orelse S =:= in_progress end, Tasks),
-        %% 系统写的说明直接给人看（前端原样显示），用中文
-        Why = <<(M#milestone.name)/binary, " 发布时结转"/utf8>>,
-        lists:foreach(fun(T) ->
-                          Log = log_entry(M#milestone.id, Target, Actor, Now, Why),
-                          ok = mnesia:write(T#task{milestone = Target, updated_at = Now,
-                                                   milestone_log = log0(T#task.milestone_log) ++ [Log]})
-                      end, Carry),
-        %% 计数只数非 Epic（Epic 的完成由步骤决定，和 counts/1 同口径）；Epic 单独列
-        Ids = fun(St) -> [T#task.id || T <- Stay, T#task.kind =/= epic, lists:member(T#task.status, St)] end,
-        Epics = [T#task.id || T <- Stay, T#task.kind =:= epic],
+        case [T#task.id || #task{status = S} = T <- Tasks, S =:= new orelse S =:= in_progress] of
+            [] -> ok;
+            Open -> bosun_store:abort({unfinished, Open})
+        end,
+        Now = bosun_util:now_ms(),
+        Why = <<"随 "/utf8, (M#milestone.name)/binary, " 发布验收"/utf8>>,
+        Verified = [begin
+                        Entry = #{from => done, to => verified, actor => Actor, comment => Why, at => Now,
+                                  commits => [], tests => undefined},
+                        ok = mnesia:write(T#task{status = verified, history = [Entry | T#task.history], updated_at = Now}),
+                        T#task.id
+                    end || #task{status = done} = T <- Tasks],
+        Epics = bosun_task_status:sync_epics_in_tx([T#task.epic || T <- Tasks], Actor, Now, <<"release (auto)">>),
+        Ids = fun(St) -> [T#task.id || T <- Tasks, T#task.kind =/= epic, lists:member(T#task.status, St)] end,
+        Delivered = Ids([done, verified]),
         Summary = #{<<"released_by">> => Actor,
-                    <<"counts">> => #{<<"delivered">> => length(Ids([done, verified])),
-                                      <<"verified">> => length(Ids([verified])),
-                                      <<"pending_verify">> => length(Ids([done])),
+                    <<"counts">> => #{<<"delivered">> => length(Delivered),
+                                      <<"verified_on_release">> => length([1 || T <- Tasks, T#task.kind =/= epic, T#task.status =:= done]),
                                       <<"rejected">> => length(Ids([rejected])),
-                                      <<"cancelled">> => length(Ids([cancelled])),
-                                      <<"carried_over">> => length(Carry)},
-                    <<"delivered">> => Ids([done, verified]),
-                    <<"epics">> => Epics,
-                    <<"pending_verify">> => Ids([done]),
-                    <<"carried_over">> => [T#task.id || T <- Carry],
-                    <<"carried_to">> => case Target of undefined -> <<"backlog">>; T -> T end,
-                    %% 快照：之后改名也保持发布时的样子
+                                      <<"cancelled">> => length(Ids([cancelled]))},
+                    <<"delivered">> => Delivered,
+                    <<"verified_on_release">> => Verified,
+                    <<"epics">> => [T#task.id || T <- Tasks, T#task.kind =:= epic],
                     %% 快照里的空值一律用 null：summary 原样进出 JSON，导入回来也是 null，往返不变
-                    <<"carried_to_name">> => case Target of undefined -> null; T2 -> name_of(T2) end,
                     <<"notes">> => case maps:get(<<"notes">>, Opts, undefined) of
                                        N when is_binary(N), N =/= <<>> -> N;
                                        _ -> null
                                    end},
         M2 = M#milestone{status = released, released_at = Now, summary = Summary, updated_at = Now},
         ok = mnesia:write(M2),
-        M2
+        {M2, Verified ++ Epics}
     end),
-    map_result(Res).
-
-%% 结转目标：backlog（空 / null / "backlog"）或同项目、未发布、不是自己的 milestone
-carry_target_in_tx(_M, V) when V =:= undefined; V =:= null; V =:= <<>>; V =:= <<"backlog">> -> undefined;
-carry_target_in_tx(M, V) when is_binary(V) ->
-    case resolve_ref_in_tx(M#milestone.project_key, V) of
-        #milestone{id = Same} when Same =:= M#milestone.id ->
-            bosun_store:abort({invalid, carry_over, <<"cannot carry over into the milestone being released">>});
-        #milestone{status = released, name = N} ->
-            bosun_store:abort({invalid, carry_over, <<N/binary, " is released">>});
-        #milestone{id = Id} -> Id;
-        none -> bosun_store:abort({invalid, carry_over, <<"unknown milestone ", V/binary>>})
-    end;
-carry_target_in_tx(_M, _) -> bosun_store:abort({invalid, carry_over, <<"expected a milestone id or \"backlog\"">>}).
+    case Res of
+        {ok, {M2, Touched}} ->
+            bosun_task_status:reindex_epics(Touched),
+            {ok, to_map(M2)};
+        {error, _} = E -> E
+    end.
 
 %% @doc 项目当前进行中的 milestone。
 -spec active(binary()) -> {ok, binary()} | none.

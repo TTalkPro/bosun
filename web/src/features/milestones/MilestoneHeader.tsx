@@ -73,8 +73,8 @@ export const MilestoneHeader = ({ milestone: m, daily, onEdit, onRelease }: Head
                   {m.released_at ? dayjs(m.released_at).format('YYYY-MM-DD HH:mm') : ''} 由 {s.released_by} 发布
                 </span>
                 <span className="text-muted-foreground">交付 <b className="text-foreground tabular-nums">{s.counts.delivered}</b></span>
-                {s.counts.pending_verify > 0 && <span className="text-amber-700 dark:text-amber-400">其中待验收 {s.counts.pending_verify}</span>}
-                {s.carried_over.length > 0 && <span className="text-muted-foreground">结转 {s.carried_over.length} → {s.carried_to === 'backlog' ? '待规划' : s.carried_to_name ?? s.carried_to}</span>}
+                {s.counts.verified_on_release > 0 && <span className="text-muted-foreground">其中 {s.counts.verified_on_release} 个随发布验收</span>}
+                {(s.counts.rejected + s.counts.cancelled) > 0 && <span className="text-muted-foreground">另有 {s.counts.rejected + s.counts.cancelled} 个已拒绝 / 已撤销</span>}
                 {s.notes && (
                   <button type="button" className="ml-auto inline-flex items-center gap-1 text-xs font-medium hover:underline" onClick={() => setNotesOpen((v) => !v)} aria-expanded={notesOpen}>
                     <ChevronDown className={cn('size-3.5 transition-transform', !notesOpen && '-rotate-90')} />发布说明

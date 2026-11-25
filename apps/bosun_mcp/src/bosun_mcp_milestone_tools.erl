@@ -87,18 +87,17 @@ transition_milestone() ->
         {milestone_id, str(<<"Milestone id, e.g. BOS-M3">>)},
         {action, enum([<<"activate">>, <<"pause">>, <<"reopen">>, <<"release">>],
                       <<"activate: planning -> active (only one active per project). pause: active -> planning. "
-                        "release: active -> released. reopen: released -> active.">>)},
-        {carry_over, str(<<"release only: where unfinished (NEW / IN_PROGRESS) tasks go - another planning or active milestone (id or name), "
-                           "or \"backlog\" (default). DONE-but-not-verified tasks stay and count as delivered.">>)},
+                        "release: active -> released (the release is the acceptance: every DONE task becomes VERIFIED; refused while any task is NEW / IN_PROGRESS). "
+                        "reopen: released -> active.">>)},
         {notes, str(<<"release only: release notes (markdown) stored in the release summary">>)}
     ]))#{required => [<<"milestone_id">>, <<"action">>]},
     beamai_mcp_types:make_tool(
         <<"transition_milestone">>,
-        <<"Change a milestone's status. Releasing snapshots what was delivered, pending verification and carried over; "
-          "each carried task gets an entry in its milestone_log.">>,
+        <<"Change a milestone's status. Releasing is the acceptance of the release: it is refused while any task in it is NEW / IN_PROGRESS "
+          "(finish those or move them out with assign_milestone first); every DONE task becomes VERIFIED; the summary records what was delivered.">>,
         Schema,
         fun(#{<<"milestone_id">> := Id, <<"action">> := Action} = Args) ->
-                Opts = (maps:with([<<"carry_over">>, <<"notes">>], Args))#{<<"actor">> => actor(Args)},
+                Opts = (maps:with([<<"notes">>], Args))#{<<"actor">> => actor(Args)},
                 reply(case Action of
                           <<"activate">> -> bosun_milestone:activate(Id, Opts);
                           <<"pause">> -> bosun_milestone:pause(Id, Opts);

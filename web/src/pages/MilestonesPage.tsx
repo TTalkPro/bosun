@@ -82,7 +82,7 @@ const MilestoneCard = ({ m, onEdit, onRelease, onChanges, onDelete, big }: CardP
         <span>进行中 <b className="font-semibold text-foreground tabular-nums">{c.in_progress}</b></span>
         <span>待验收 <b className={cn('font-semibold tabular-nums', c.pending_verify ? 'text-amber-700 dark:text-amber-400' : 'text-foreground')}>{c.pending_verify}</b></span>
         {c.epics > 0 && <span>Epic <b className="font-semibold text-foreground tabular-nums">{c.epics_done}/{c.epics}</b></span>}
-        {m.status === 'released' && m.summary && m.summary.carried_over.length > 0 && <span>结转 {m.summary.carried_over.length} 个 → {m.summary.carried_to === 'backlog' ? '待规划' : m.summary.carried_to_name ?? m.summary.carried_to}</span>}
+        {m.status === 'released' && m.summary && <span>交付 <b className="font-semibold text-foreground tabular-nums">{m.summary.counts.delivered}</b></span>}
         <button type="button" onClick={onChanges} className="ml-auto inline-flex items-center gap-1 hover:text-foreground"><History className="size-3.5" />{m.status === 'released' ? '发布说明与范围变更' : '范围变更'}</button>
       </div>
     </Card>

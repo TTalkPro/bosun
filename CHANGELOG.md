@@ -3,6 +3,14 @@
 本文件记录 Bosun 各版本的变化，格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 每一版的细节见 [`TASK.md`](TASK.md) 与 [`tasks/`](tasks/) 下的任务记录；设计见 [`designs/`](designs/)。
 
+## [未发布]
+
+### 变更
+
+- **发布 = 验收**（[设计 14](designs/14-milestone.md) D8）：milestone 里还有新建 / 进行中的任务（含 Epic）时不能发布，提示先完成或移出（REST 409 `unfinished`，MCP 文案给出下一步）；发布面板列出这些任务，可一键移到别的 milestone 或待规划（记「<名称> 发布前移出」）。发布时已完成的任务全部自动变为已验收（历史记「随 <名称> 发布验收」），不再在发布时自动结转。
+- 发布记录快照改为：交付、随发布验收、Epic、已拒绝 / 已撤销数、发布说明；MCP `transition_milestone` 去掉 `carry_over` 参数。
+- 发布说明草稿不再标「待验收」（发布时都会成为已验收）。
+
 ## [0.1.4] — 2026-11-25
 
 对应 Bosun 自己的 milestone `0.1.4`。
@@ -79,7 +87,8 @@
 - 前端全量迁移到 shadcn / Tailwind；导入导出（replace / merge）；生产 release、systemd、FreeBSD rc.d、Docker Compose（端口 5000）。
 - 两轮全项目审查的缺陷与安全修复；检索引擎 bitcask 6.7.1 → 12.0.1。
 
-[未发布]: https://github.com/TTalkPro/bosun/compare/0.1.3...HEAD
+[未发布]: https://github.com/TTalkPro/bosun/compare/0.1.4...HEAD
+[0.1.4]: https://github.com/TTalkPro/bosun/compare/0.1.3...0.1.4
 [0.1.3]: https://github.com/TTalkPro/bosun/compare/0.1.2...0.1.3
 [0.1.2]: https://github.com/TTalkPro/bosun/compare/0.1.1...0.1.2
 [0.1.1]: https://github.com/TTalkPro/bosun/compare/bff4465...0.1.1

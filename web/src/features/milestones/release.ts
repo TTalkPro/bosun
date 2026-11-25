@@ -14,7 +14,7 @@ export const burndownSeries = (daily: StatsOverview['daily'], targetDate: string
   return { actual, ideal };
 };
 
-/** 未完成任务的缺省去向：目标日期最近的规划中 milestone；没有就待规划 */
+/** 发布前移出没做完的任务时的缺省去向：目标日期最近的规划中 milestone；没有就待规划 */
 export const defaultCarryTarget = (milestones: Milestone[], releasing: Milestone): string => {
   const planning = milestones.filter((m) => m.status === 'planning' && m.id !== releasing.id)
     .sort((a, b) => (a.target_date ?? '9999').localeCompare(b.target_date ?? '9999') || a.seq - b.seq);
@@ -25,7 +25,7 @@ export const isFinished = (t: TaskSummary) => t.status === 'DONE' || t.status ==
 export const isUnfinished = (t: TaskSummary) => t.status === 'NEW' || t.status === 'IN_PROGRESS';
 
 /**
- * 发布说明草稿（Markdown）：按 Epic 分组列出交付的任务，Epic 外的归「其它」；已完成未验收的标「待验收」。
+ * 发布说明草稿（Markdown）：按 Epic 分组列出交付的任务（已完成 / 已验收；发布时都会成为已验收），Epic 外的归「其它」。
  * epicTitles：Epic id → 标题（Epic 本身可能不在这个 milestone 里，标题从项目的 Epic 列表取）。
  */
 export const releaseNotes = (m: Milestone, tasks: TaskSummary[], epicTitles: Record<string, string>, today = dayjs()): string => {
@@ -35,7 +35,7 @@ export const releaseNotes = (m: Milestone, tasks: TaskSummary[], epicTitles: Rec
     const k = t.epic ?? '';
     groups.set(k, [...(groups.get(k) ?? []), t]);
   });
-  const line = (t: TaskSummary) => `- ${t.title}（${t.id}）${t.status === 'DONE' ? ' — 待验收' : ''}`;
+  const line = (t: TaskSummary) => `- ${t.title}（${t.id}）`;
   const out = [`## ${m.name}（${today.format('YYYY-MM-DD')}）`, '', `交付 ${delivered.length} 项。`];
   [...groups.keys()].filter((k) => k).sort().forEach((k) => {
     out.push('', `### ${epicTitles[k] ?? k}（${k}）`, '', ...groups.get(k)!.map(line));

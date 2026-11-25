@@ -388,13 +388,16 @@ milestones() ->
     ?assertEqual([<<"in">>, <<"in">>, <<"in">>, <<"out">>], lists:sort([D || #{<<"direction">> := D} <- Changes])),
     %% BQL
     {ok, #{<<"total">> := 2}} = call(<<"query_tasks">>, #{<<"bql">> => <<"milestone = active">>}),
-    %% 发布：没做完的挪到 0.2；已发布的不能再加
+    %% 发布：有没做完的先拒绝（告诉 Agent 怎么办）；挪走后发布，已完成的变已验收；已发布的不能再加
     {ok, _} = call(<<"transition_task">>, #{<<"task_id">> => <<"MS-1">>, <<"to">> => <<"IN_PROGRESS">>}),
     {ok, _} = call(<<"transition_task">>, #{<<"task_id">> => <<"MS-1">>, <<"to">> => <<"DONE">>, <<"commits">> => []}),
-    {ok, #{<<"status">> := <<"released">>, <<"summary">> := #{<<"carried_over">> := [<<"MS-2">>], <<"carried_to">> := <<"MS-M2">>,
-                                                              <<"pending_verify">> := [<<"MS-1">>], <<"notes">> := <<"- a">>}}} =
-        call(<<"transition_milestone">>, #{<<"milestone_id">> => <<"MS-M1">>, <<"action">> => <<"release">>,
-                                           <<"carry_over">> => <<"0.2">>, <<"notes">> => <<"- a">>}),
+    {error, Unfinished} = call(<<"transition_milestone">>, #{<<"milestone_id">> => <<"MS-M1">>, <<"action">> => <<"release">>}),
+    ?assertMatch(<<"cannot release: 1 task(s) are not finished (MS-2); finish them", _/binary>>, Unfinished),
+    {ok, #{<<"updated">> := [<<"MS-2">>]}} =
+        call(<<"assign_milestone">>, #{<<"project_key">> => <<"MS">>, <<"task_ids">> => [<<"MS-2">>], <<"milestone">> => <<"0.2">>, <<"comment">> => <<"next">>}),
+    {ok, #{<<"status">> := <<"released">>, <<"summary">> := #{<<"verified_on_release">> := [<<"MS-1">>], <<"notes">> := <<"- a">>}}} =
+        call(<<"transition_milestone">>, #{<<"milestone_id">> => <<"MS-M1">>, <<"action">> => <<"release">>, <<"notes">> => <<"- a">>}),
+    {ok, #{<<"status">> := <<"VERIFIED">>}} = call(<<"get_task">>, #{<<"task_id">> => <<"MS-1">>}),
     {error, Released} = call(<<"update_task">>, #{<<"task_id">> => <<"MS-2">>, <<"milestone">> => <<"MS-M1">>}),
     ?assertMatch(<<"invalid milestone: 0.1 is released", _/binary>>, Released),
     {error, State} = call(<<"transition_milestone">>, #{<<"milestone_id">> => <<"MS-M1">>, <<"action">> => <<"pause">>}),

@@ -15,7 +15,8 @@
 | D3 | **看板只在选中某个 milestone 时提供**；全部任务、待规划只有列表。没有进行中的 milestone 时缺省进待规划（列表）并提示新建 | 看板不再提供「整项目」视图；审定后又收紧为「待规划也不用看板」 |
 | D4 | milestone 与 Epic **正交**：任务可以同时属于一个 Epic 和一个 milestone | Epic 回答「做什么」、可跨多次发布；milestone 回答「什么时候交付」、发布后关闭 |
 | D5 | **Epic 可以进 milestone**：一次发布 = 若干 Epic + 若干独立任务（bug）。Epic 换 milestone 时，原来跟它在同一个 milestone（含都没排期）、还没做完（NEW / IN_PROGRESS）的步骤一起挪；做完的、明确排在别处的不动；新建步骤没指定时继承 Epic 的（Epic 的已发布就不继承） | 审定时改（原稿是「Epic 不进、只排步骤」） |
-| D7 | **归属变更留痕**：每次移入 / 移出 / 发布结转 / 跟随 Epic 都记进任务的 `milestone_log`，milestone 详情列出「范围变更」 | 审定时加：例如某任务这次不做了，挪到下一个 milestone，要看得到 |
+| D7 | **归属变更留痕**：每次移入 / 移出 / 跟随 Epic 都记进任务的 `milestone_log`，milestone 详情列出「范围变更」 | 审定时加：例如某任务这次不做了，挪到下一个 milestone，要看得到 |
+| D8 | **发布 = 验收**：有新建 / 进行中的任务（Epic 也算）就不能发布，先完成或移出；发布时已完成的全部置为已验收。不再在发布时自动结转 | 用户 2026-11-25 定（替换原稿 §4.3 的「未完成按 carry_over 结转、已完成未验收的留下算交付」） |
 | D6 | 一个任务最多属于一个 milestone；没有 = 待规划 | 最常见的「fix version」语义，简单 |
 
 和 Epic 的对比（为什么不复用 Epic）：
@@ -96,7 +97,7 @@ planning ──activate──▶ active ──release──▶ released
 | POST | `/api/v1/projects/:key/milestones` | 新建（缺省 `planning`）→ 201 |
 | GET / PATCH / DELETE | `/api/v1/milestones/:id` | 详情（含计数与 `changes` 范围变更）/ 改 name、description、日期 / 删除 |
 | POST | `/api/v1/milestones/:id/activate` `…/pause` `…/reopen` | 状态迁移 |
-| POST | `/api/v1/milestones/:id/release` | `{carry_over: "backlog" \| "m8", notes?}` → 发布结果 |
+| POST | `/api/v1/milestones/:id/release` | `{notes?}` → 发布结果；有没做完的 → 409 `unfinished`（detail.tasks） |
 | GET | `/api/v1/projects/:key/tasks?milestone=m7\|backlog\|active` | 看板 / 列表的数据源 |
 | PATCH | `/api/v1/tasks/:id` | 加 `milestone`（"" = 移出）与可选的 `milestone_comment` |
 | POST | `/api/v1/projects/:key/tasks/milestone` | 批量 `{ids: [...], milestone: "BOS-M7" \| "", comment?}`，逐条校验，返回成功 / 失败列表；comment 记进每条变更 |
@@ -109,11 +110,11 @@ planning ──activate──▶ active ──release──▶ released
 一次请求、一个事务：
 
 1. 只能从 `active` 发布。
-2. **未完成**（NEW / IN_PROGRESS）的任务按 `carry_over` 移到另一个 milestone（必须同项目、不能是 released）或退回待规划。DONE（未验收）**留在本次**，算交付，但在结果和页面上列出「待验收」。
-3. 写 `released_at`、`status = released`，`summary` 快照：
-   `#{released_by, counts => #{delivered, verified, pending_verify, rejected, cancelled, carried_over}, delivered => [Id], epics => [Id], pending_verify => [Id], carried_over => [Id], carried_to => backlog | M, notes => Markdown}`
-   结转的任务各记一条 `milestone_log`（「carried over when 0.1.4 was released」）。没做完的 Epic 也按同样规则结转。
-   ——发布后任务还会被移动 / 打回，快照保证历史上的「这次发了什么」不变。
+2. **发布 = 验收**（D8）：范围里还有 NEW / IN_PROGRESS 的任务（含 Epic）→ 拒绝 `{unfinished, [Id]}`（REST 409 `unfinished`，detail.tasks；MCP 文案提示先完成或 `assign_milestone` 移出）。
+3. DONE 的任务（含 Epic）全部置为 VERIFIED，历史记「随 <名称> 发布验收」，actor = 发布人。不走执行方自验收要测试的检查——发布本身就是验收。已拒绝 / 已撤销的留在里面，不挡发布。所属 Epic 按步骤重新推导（03 的自动流转）。
+4. 写 `released_at`、`status = released`，`summary` 快照：
+   `#{released_by, counts => #{delivered, verified_on_release, rejected, cancelled}, delivered => [Id], verified_on_release => [Id], epics => [Id], notes => Markdown | null}`
+   ——发布后任务还会被移动 / 打回，快照保证历史上的「这次发了什么」不变。提交后重建被验收任务的索引（索引带状态）。
 4. `notes`（可选）：前端按 Epic 分组生成的发布说明草稿，用户改完一起提交，存进 summary（不覆盖 description）。
 
 ### 4.4 MCP
@@ -145,8 +146,8 @@ planning ──activate──▶ active ──release──▶ released
 
 - `projects[KEY]` / `totals`：当前在这个 milestone 里的任务的计数；
 - `daily`：从 `start_date`（没有就取创建日）到「发布日 / 目标日期与今天的较晚者」，每天：`created` = 当天移入范围的数，`completed` = 当天在范围内迁移到 DONE 的次数，`remaining` = 当天结束时范围内还没完成（不是 DONE / VERIFIED / REJECTED / CANCELLED）的数，今天以后为 null；Epic 不计；
-- 范围按 `milestone_log` **回放**：中途移入 / 移出 / 结转都算准（审定时接受的「按当前范围」局限因此不存在了）；没有记录的老任务视为建单起就在；
-- 已发布的最后一天按「发布前一刻」算，不让结转把曲线拉到 0；
+- 范围按 `milestone_log` **回放**：中途移入 / 移出都算准（审定时接受的「按当前范围」局限因此不存在了）；没有记录的老任务视为建单起就在；
+- 已发布的最后一天按「发布前一刻」算（发布时不再结转，按发布前一刻取值也不影响结果）；
 - 另带 `milestone`（id / 名称 / 状态 / 日期）与 `range`（start / end / today）；超过 180 天只给最后 180 天。
 
 前端燃尽图：实际剩余（实线）+ 理想线（从第一天的剩余线性降到目标日 0，虚线），今天竖线，悬停十字线与提示，隐藏表格给读屏。
@@ -169,10 +170,10 @@ planning ──activate──▶ active ──release──▶ released
 
 **发布面板**（右侧面板 lg；页头卡片「发布…」、管理页卡片菜单都能打开）
 
-1. 概况：已完成 N、已验收 M、待验收 K（列出）、未完成 U（列出）。
-2. 未完成去向：下拉（规划中的 milestone / 新建一个 / 退回待规划），缺省选目标日期最近的规划中 milestone。
-3. 发布说明：按 Epic 分组、Epic 外的归「其它」，列出已完成任务（`- 标题（BOS-12）`），可编辑。
-4. 确认 → `POST …/release` → 跳到已发布 milestone 的只读概览。
+1. 有没做完的：红框列出，「全部移到 <规划中的 milestone / 待规划>」一键移出（每条记「<名称> 发布前移出」）；或点任务去把它做完。有没做完的时「发布」按钮不可点。
+2. 概况：交付 N、随发布验收 K（列出）、没做完 U、拒绝 / 撤销。
+3. 发布说明：按 Epic 分组、Epic 外的归「其它」，列出已完成 / 已验收的任务（`- 标题（BOS-12）`），可编辑。
+4. 确认 → `POST …/release` → 页头显示发布记录。
 
 **任务的归属入口**
 
@@ -180,7 +181,7 @@ planning ──activate──▶ active ──release──▶ released
 - 新建任务面板属性栏加 Milestone，缺省 = 当前视图的 milestone（从看板列「快速添加」也一样）。
 - 列表视图：新增 Milestone 列（可显隐）、筛选 facet、多选后「设置 Milestone…」批量。
 
-**移动的交互**：从待规划排进 milestone 直接改；从某个 milestone 移出或换到别的，先弹确认框写原因（可空），记进 `milestone_log`。系统自动写的说明用中文（「跟随 Epic BOS-2」「0.1.4 发布时结转」），前端原样显示。
+**移动的交互**：从待规划排进 milestone 直接改；从某个 milestone 移出或换到别的，先弹确认框写原因（可空），记进 `milestone_log`。系统自动写的说明用中文（「跟随 Epic BOS-2」「随 0.1.4 发布验收」「0.1.4 发布前移出」），前端原样显示。
 
 **其它**：侧栏项目下单独一行子项（缩进 + 竖线）显示进行中的 milestone、进度条与百分比，点了进它的看板；BQL 补全加 `milestone` 字段与本项目的 milestone 名。
 

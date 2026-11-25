@@ -10,7 +10,8 @@ milestone_test_() ->
         fun(_) -> {"list filter by milestone / backlog / active", fun list_filter/0} end,
         fun(_) -> {"epic in milestone: open steps follow, new steps inherit", fun epic_cascade/0} end,
         fun(_) -> {"change log and milestone changes", fun change_log/0} end,
-        fun(_) -> {"release: carry over, snapshot, counts", fun release/0} end,
+        fun(_) -> {"release: refused while unfinished, verifies DONE, snapshot", fun release/0} end,
+        fun(_) -> {"release with an epic", fun epic_release/0} end,
         fun(_) -> {"delete only empty planning", fun delete/0} end,
         fun(_) -> {"batch assign", fun batch_assign/0} end,
         fun(_) -> {"BQL milestone fields", fun bql/0} end,
@@ -116,7 +117,8 @@ membership() ->
     %% 移出
     {ok, _} = bosun_task:update(T1, #{<<"milestone">> => <<>>}),
     ?assertEqual(undefined, ms_of(T1)),
-    %% 已发布的不能加进去，但能从里面移出
+    %% 已发布的不能加进去，但能从里面移出（发布前 T2 得先做完）
+    move(T2, <<"IN_PROGRESS">>), move(T2, <<"DONE">>),
     {ok, _} = bosun_milestone:release(M2, #{}),
     ?assertMatch({error, {invalid, milestone, _}}, bosun_task:update(T1, #{<<"milestone">> => M2})),
     {ok, _} = bosun_task:update(T2, #{<<"milestone">> => M1}),
@@ -204,26 +206,47 @@ release() ->
     ?assertEqual(#{<<"scope">> => 4, <<"done">> => 2, <<"verified">> => 1, <<"pending_verify">> => 1,
                    <<"open">> => 2, <<"cancelled">> => 1, <<"percent">> => 50},
                  maps:with([<<"scope">>, <<"done">>, <<"verified">>, <<"pending_verify">>, <<"open">>, <<"cancelled">>, <<"percent">>], C)),
-    %% 结转目标不能是自己 / 已发布的 / 不存在的
-    ?assertMatch({error, {invalid, carry_over, _}}, bosun_milestone:release(M1, #{<<"carry_over">> => M1})),
-    ?assertMatch({error, {invalid, carry_over, _}}, bosun_milestone:release(M1, #{<<"carry_over">> => <<"9.9">>})),
-    {ok, R} = bosun_milestone:release(M1, #{<<"carry_over">> => M2, <<"notes">> => <<"- done">>, <<"actor">> => <<"david">>}),
+    %% 还有没做完的：拒绝发布，列出是哪些
+    {error, {unfinished, Open}} = bosun_milestone:release(M1, #{}),
+    ?assertEqual(lists:sort([New, Doing]), lists:sort(Open)),
+    ?assertEqual(<<"active">>, status(M1)),
+    %% 先完成 / 先移出（一个做完，一个挪到 0.2）
+    move(Doing, <<"DONE">>),
+    {ok, _} = bosun_task:update(New, #{<<"milestone">> => M2, <<"milestone_comment">> => <<"下一版"/utf8>>}),
+    {ok, R} = bosun_milestone:release(M1, #{<<"notes">> => <<"- done">>, <<"actor">> => <<"david">>}),
     S = maps:get(<<"summary">>, R),
-    ?assertEqual(lists:sort([New, Doing]), lists:sort(maps:get(<<"carried_over">>, S))),
-    ?assertEqual(M2, maps:get(<<"carried_to">>, S)),
-    ?assertEqual([Done], maps:get(<<"pending_verify">>, S)),
-    ?assertEqual(lists:sort([Done, Verified]), lists:sort(maps:get(<<"delivered">>, S))),
+    %% 发布即验收：已完成的都变成已验收，历史记一条
+    ?assertEqual(lists:sort([Done, Doing]), lists:sort(maps:get(<<"verified_on_release">>, S))),
+    ?assertEqual(lists:sort([Doing, Done, Verified]), lists:sort(maps:get(<<"delivered">>, S))),
+    ?assertMatch(#{<<"delivered">> := 3, <<"verified_on_release">> := 2, <<"cancelled">> := 1}, maps:get(<<"counts">>, S)),
     ?assertEqual(<<"- done">>, maps:get(<<"notes">>, S)),
-    ?assertEqual({M2, M2, M1, M1, M1}, {ms_of(New), ms_of(Doing), ms_of(Done), ms_of(Verified), ms_of(Cancelled)}),
-    %% 结转写进变更记录
-    {ok, Full} = bosun_task:get(New),
-    ?assertMatch([_, #{<<"from">> := M1, <<"to">> := M2, <<"comment">> := <<"0.1 发布时结转"/utf8>>}],
-                 maps:get(<<"milestone_log">>, Full)),
-    %% 退回待规划
+    {ok, #{<<"status">> := <<"VERIFIED">>, <<"history">> := [#{<<"from">> := <<"DONE">>, <<"actor">> := <<"david">>,
+                                                               <<"comment">> := <<"随 0.1 发布验收"/utf8>>} | _]}} = bosun_task:get(Done),
+    {ok, #{<<"status">> := <<"CANCELLED">>}} = bosun_task:get(Cancelled),
+    ?assertEqual({M2, M1, M1, M1}, {ms_of(New), ms_of(Done), ms_of(Verified), ms_of(Cancelled)}),
+    %% 执行方自己做的也照样验收（发布就是验收，不要求测试证据）
     {ok, _} = bosun_milestone:activate(M2, #{}),
-    {ok, R2} = bosun_milestone:release(M2, #{}),
-    ?assertEqual(<<"backlog">>, maps:get(<<"carried_to">>, maps:get(<<"summary">>, R2))),
-    ?assertEqual({undefined, undefined}, {ms_of(New), ms_of(Doing)}).
+    Self = task(<<"RL">>, <<"self">>, #{<<"milestone">> => M2}),
+    {ok, _} = bosun_task_status:transition(Self, <<"IN_PROGRESS">>, #{actor => <<"david">>}),
+    {ok, _} = bosun_task_status:transition(Self, <<"DONE">>, #{actor => <<"david">>}),
+    {ok, _} = bosun_task:update(New, #{<<"milestone">> => <<>>}),
+    {ok, #{<<"summary">> := #{<<"verified_on_release">> := [Self]}}} = bosun_milestone:release(M2, #{<<"actor">> => <<"david">>}),
+    {ok, #{<<"status">> := <<"VERIFIED">>}} = bosun_task:get(Self).
+
+epic_release() ->
+    %% Epic 在里面：步骤都做完了 Epic 自动 DONE，发布时一起验收；Epic 没做完也挡发布
+    project(<<"ER">>),
+    M1 = ms(<<"ER">>, <<"0.1">>),
+    E = task(<<"ER">>, <<"goal">>, #{<<"kind">> => <<"epic">>, <<"milestone">> => M1}),
+    S1 = task(<<"ER">>, <<"s1">>, #{<<"epic">> => E}),
+    {ok, _} = bosun_milestone:activate(M1, #{}),
+    {error, {unfinished, Open}} = bosun_milestone:release(M1, #{}),
+    ?assertEqual(lists:sort([E, S1]), lists:sort(Open)),
+    move(S1, <<"IN_PROGRESS">>), move(S1, <<"DONE">>),
+    {ok, #{<<"status">> := <<"DONE">>}} = bosun_task:get(E),
+    {ok, #{<<"summary">> := #{<<"epics">> := [E], <<"verified_on_release">> := Ver}}} = bosun_milestone:release(M1, #{}),
+    ?assertEqual(lists:sort([E, S1]), lists:sort(Ver)),
+    {ok, #{<<"status">> := <<"VERIFIED">>}} = bosun_task:get(E).
 
 delete() ->
     project(<<"DL">>),
@@ -276,6 +299,7 @@ backup_round_trip() ->
     E = task(<<"BK">>, <<"goal">>, #{<<"kind">> => <<"epic">>, <<"milestone">> => M1}),
     T = task(<<"BK">>, <<"t">>, #{<<"epic">> => E}),
     {ok, _} = bosun_milestone:activate(M1, #{}),
+    move(T, <<"IN_PROGRESS">>), move(T, <<"DONE">>),
     {ok, _} = bosun_milestone:release(M1, #{<<"notes">> => <<"n">>}),
     _ = ms(<<"BK">>, <<"0.2">>),
     {ok, _} = bosun_task:update(T, #{<<"milestone">> => <<"0.2">>}),

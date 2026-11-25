@@ -96,3 +96,6 @@
 - [x] BOS-70 [docs/FEATURES.md](docs/FEATURES.md)：按 17 个模块列全部功能
 - [x] BOS-71 README 功能截图：docs/screenshots/（9 张，演示数据 Acme，含深色）
 - [x] 界面调整（用户提出）：看板只在选中某个 milestone 时提供，全部任务 / 待规划只有列表；侧栏 milestone 改为项目下的独立子项（缩进 + 进度条 + 百分比）
+
+## 12. 0.1.4 之后
+- [x] 发布 = 验收（用户 2026-11-25 定，设计 14 D8）：milestone 里有新建 / 进行中的任务（含 Epic）时拒绝发布（409 `unfinished` / MCP 文案），发布面板列出并可一键移出；发布时已完成的全部置为已验收（历史「随 <名称> 发布验收」），不再自动结转；summary 改为 delivered / verified_on_release / epics / notes；MCP `transition_milestone` 去掉 carry_over；文档、CHANGELOG（未发布段）、发布面板截图同步（未提交）

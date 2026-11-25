@@ -242,6 +242,10 @@ error_to_text({conflict, active_exists, Other}) ->
 error_to_text({milestone_state, Status, Action}) ->
     <<"cannot ", (atom_to_binary(Action, utf8))/binary, " a ", (atom_to_binary(Status, utf8))/binary,
       " milestone; activate: planning -> active, pause: active -> planning, release: active -> released, reopen: released -> active">>;
+error_to_text({unfinished, Ids}) ->
+    <<"cannot release: ", (integer_to_binary(length(Ids)))/binary, " task(s) are not finished (",
+      (iolist_to_binary(lists:join(<<", ">>, Ids)))/binary,
+      "); finish them (transition_task to DONE) or move them out (assign_milestone to another milestone, or \"\" for the backlog) first">>;
 error_to_text(not_empty) ->
     <<"the milestone still has tasks; move them out (assign_milestone with milestone=\"\") before deleting">>;
 error_to_text({conflict, name}) ->

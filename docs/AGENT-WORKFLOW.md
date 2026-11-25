@@ -91,7 +91,7 @@ NEW ──→ IN_PROGRESS ──→ DONE ──→ VERIFIED
 - **排期**：建单时 `create_task(..., milestone="0.1.4")`（id、名称或 `"active"` 都行），或 `update_task(id, milestone=...)`；一批任务用 `assign_milestone(project_key, task_ids, milestone)`。不给就在待规划（backlog）。Epic 也可以排进去：它还没做完的步骤会跟着走；Epic 下新建的步骤不指定时跟 Epic 进同一个。
 - **移出要说原因**：这次做不完、挪到下一个时 `update_task(id, milestone="0.2", milestone_comment="这次来不及")`（或 `assign_milestone(..., comment=...)`）。每次移入 / 移出都记进任务的 `milestone_log`，`get_milestone` 的 `changes` 列出这次发布的范围变化。
 - **规则**：已发布的 milestone 不能再加任务（可以移出）；完成率 = 已完成（DONE + VERIFIED）/ 范围（不含 Epic、已拒绝、已撤销）。
-- **发布**（需要 `manage`）：`transition_milestone(id, "release", carry_over="0.2", notes="...")`。新建 / 进行中的任务按 `carry_over` 挪到别的 milestone 或退回待规划（`"backlog"`）；已完成未验收的留下算交付，之后照常验收。其它状态操作：`activate`（开始）、`pause`（回到规划中）、`reopen`（重新打开已发布的）。
+- **发布 = 验收**（需要 `manage`）：`transition_milestone(id, "release", notes="...")`。范围里还有新建 / 进行中的任务（含 Epic）时会被拒绝——先把它们做完，或用 `assign_milestone(..., milestone="0.2" 或 "")` 移出；发布时已完成的全部自动变为已验收。其它状态操作：`activate`（开始）、`pause`（回到规划中）、`reopen`（重新打开已发布的）。
 - BQL：`milestone = "0.1.4"`、`milestone = active`、`milestone IS EMPTY`（待规划）、`milestone_status = released`。
 
 ## 5. 反馈

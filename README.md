@@ -17,7 +17,7 @@
 
 | | |
 |---|---|
-| ![Milestone 管理](docs/screenshots/milestones.png) **Milestone 管理**：进行中置顶，规划中按目标日期，已发布折叠 | ![发布面板](docs/screenshots/release.png) **发布**：交付 / 待验收 / 没做完的去向，按 Epic 分组的发布说明 |
+| ![Milestone 管理](docs/screenshots/milestones.png) **Milestone 管理**：进行中置顶，规划中按目标日期，已发布折叠 | ![发布面板](docs/screenshots/release.png) **发布**：发布即验收，没做完的要先完成或移出，按 Epic 分组的发布说明 |
 | ![任务详情](docs/screenshots/task.png) **任务详情**：进度、动态流（状态 / Milestone 变更 / 反馈）、交付证据 | ![待回答提问](docs/screenshots/task-question.png) **提醒**：有提问待回答、被依赖阻塞时的提示条 |
 | ![任务列表](docs/screenshots/list.png) **列表**：全部任务、Milestone 列、勾选批量排期 | ![BQL 查询](docs/screenshots/query.png) **BQL 查询**：高亮与补全、结果概览、导出 CSV |
 | ![项目总览（深色）](docs/screenshots/projects-dark.png) **项目总览**（深色主题） | ![项目看板（深色）](docs/screenshots/board-dark.png) **项目看板**（深色主题） |
@@ -33,7 +33,7 @@
 3. **状态与验收**：`新建 → 进行中 → 已完成 → 已验收`，可打回 / 重开；执行方可拒绝、提出方重新提交；不需要了可撤销、可恢复；完成带提交与测试证据，执行方自己验收必须有通过的测试
 4. **反馈**：说明 / 评审 / 提问 / 回答，不可变（修订 = 新版本 + 旧版本作废）
 5. **Epic 与关联**：Epic 是整体目标，步骤挂上去、进度自动派生；任务之间「依赖」（没做完不能开始）与「替代」（对方自动撤销）
-6. **Milestone（发布范围）**：每次发布先规划一组任务（可含若干 Epic 与独立任务），每个项目同时一个进行中，看板只看这一个；移入 / 移出都留痕；发布时没做完的结转到下一个或退回待规划，自动生成按 Epic 分组的发布说明；燃尽图（[设计 14](designs/14-milestone.md)）
+6. **Milestone（发布范围）**：每次发布先规划一组任务（可含若干 Epic 与独立任务），每个项目同时一个进行中，看板只看这一个；移入 / 移出都留痕；发布即验收（有没做完的不能发布，先完成或移出），自动生成按 Epic 分组的发布说明；燃尽图（[设计 14](designs/14-milestone.md)）
 7. **看板与列表**：拖拽改状态（含触屏 / 键盘）、工具条筛选与排序；列表列显隐、排序、分页、批量排期；统计卡片与每日动态
 8. **检索与 [BQL](docs/BQL.md)**：中英文全文检索；JQL 风格的跨项目查询、可保存的筛选器
 9. **Agent 接入（MCP）**：28 个工具、3 个资源、`work_on_task` 提示，错误信息告诉 Agent 下一步怎么做
@@ -177,7 +177,7 @@ claude mcp add --transport http --scope user bosun http://127.0.0.1:5000/mcp \
 | GET / POST | `/api/v1/projects` |
 | GET / PATCH | `/api/v1/projects/:key` |
 | GET / POST | `/api/v1/projects/:key/tasks`（GET 可带 `milestone=<id\|名称\|active\|backlog>`） |
-| GET / POST | `/api/v1/projects/:key/milestones`；GET / PATCH / DELETE `/api/v1/milestones/:id`（GET 带 `changes` 范围变更）；POST `/api/v1/milestones/:id/activate\|pause\|reopen\|release`（release：`{carry_over, notes}`） |
+| GET / POST | `/api/v1/projects/:key/milestones`；GET / PATCH / DELETE `/api/v1/milestones/:id`（GET 带 `changes` 范围变更）；POST `/api/v1/milestones/:id/activate\|pause\|reopen\|release`（release：`{notes}`；发布即验收，有没做完的 → 409 `unfinished`） |
 | POST | `/api/v1/projects/:key/tasks/milestone`（`{ids, milestone, comment}` 批量设置归属；key 需 `write`，milestone 本身的增删改要 `manage`） |
 | GET / PATCH | `/api/v1/tasks/:id` |
 | POST / DELETE | `/api/v1/tasks/:id/links`、`/api/v1/tasks/:id/links/:type/:to`（`replaces` / `depends_on`） |

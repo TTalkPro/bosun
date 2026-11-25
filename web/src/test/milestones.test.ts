@@ -84,7 +84,7 @@ describe('release helpers', () => {
     expect(defaultCarryTarget([cur, ms({ id: 'BOS-M1', status: 'released' })], cur)).toBe('backlog');
   });
 
-  it('发布说明：按 Epic 分组，Epic 外的归其它，待验收标出来，没做完的不列', async () => {
+  it('发布说明：按 Epic 分组，Epic 外的归其它，没做完的不列', async () => {
     const { releaseNotes } = await import('@/features/milestones/release');
     const notes = releaseNotes(ms({ name: '0.1.4' }), [
       task({ id: 'BOS-2', seq: 2, title: '发布范围', kind: 'epic', status: 'IN_PROGRESS' }),
@@ -95,7 +95,7 @@ describe('release helpers', () => {
     expect(notes).toBe([
       '## 0.1.4（2026-12-05）', '', '交付 2 项。',
       '', '### 发布范围（BOS-2）', '', '- 后端（BOS-3）',
-      '', '### 其它', '', '- 大写锁定（BOS-6） — 待验收', '',
+      '', '### 其它', '', '- 大写锁定（BOS-6）', '',
     ].join('\n'));
   });
 });

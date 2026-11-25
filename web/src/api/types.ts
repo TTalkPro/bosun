@@ -63,16 +63,15 @@ export interface MilestoneCounts {
   epics_done: number;
 }
 
+/** 发布时的快照（14 §4.3）：发布 = 验收，已完成的都在发布时置为已验收 */
 export interface MilestoneSummary {
   released_by: string;
-  counts: Record<'delivered' | 'verified' | 'pending_verify' | 'rejected' | 'cancelled' | 'carried_over', number>;
+  counts: Record<'delivered' | 'verified_on_release' | 'rejected' | 'cancelled', number>;
+  /** 交付的任务（不含 Epic） */
   delivered: string[];
+  /** 发布时从已完成变成已验收的（含 Epic） */
+  verified_on_release: string[];
   epics: string[];
-  pending_verify: string[];
-  carried_over: string[];
-  carried_to: string;
-  /** 发布时目标 milestone 的名称（快照） */
-  carried_to_name?: string | null;
   notes: string | null;
 }
 

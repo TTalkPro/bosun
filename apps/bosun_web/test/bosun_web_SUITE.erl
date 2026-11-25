@@ -533,9 +533,13 @@ milestones(Config) ->
     ?assertEqual([<<"in">>, <<"in">>, <<"out">>], lists:sort([maps:get(<<"direction">>, C) || C <- Changes])),
     {200, #{<<"milestones">> := [#{<<"id">> := M1}, #{<<"id">> := M2}]}} = req(get, Config, "/api/v1/projects/REL/milestones"),
 
-    %% 发布：未完成的结转到 0.2
-    {200, #{<<"status">> := <<"released">>, <<"summary">> := #{<<"carried_over">> := [T2], <<"carried_to">> := M2}}} =
-        req(post, Config, "/api/v1/milestones/REL-M1/release", #{<<"carry_over">> => M2, <<"notes">> => <<"- a">>}),
+    %% 发布：T2 还没做完 → 409 unfinished；移到 0.2 后再发布，发布即验收
+    {409, #{<<"error">> := <<"unfinished">>, <<"detail">> := #{<<"tasks">> := [T2]}}} =
+        req(post, Config, "/api/v1/milestones/REL-M1/release", #{}),
+    {200, #{<<"updated">> := [T2]}} =
+        req(post, Config, "/api/v1/projects/REL/tasks/milestone", #{<<"ids">> => [T2], <<"milestone">> => M2, <<"comment">> => <<"next">>}),
+    {200, #{<<"status">> := <<"released">>, <<"summary">> := #{<<"verified_on_release">> := [], <<"notes">> := <<"- a">>}}} =
+        req(post, Config, "/api/v1/milestones/REL-M1/release", #{<<"notes">> => <<"- a">>}),
     {200, #{<<"milestone">> := M2}} = req(get, Config, "/api/v1/tasks/" ++ binary_to_list(T2)),
     {400, #{<<"field">> := <<"milestone">>}} =
         req(patch, Config, "/api/v1/tasks/" ++ binary_to_list(T2), #{<<"milestone">> => M1}),
