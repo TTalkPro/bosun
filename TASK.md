@@ -99,3 +99,4 @@
 
 ## 12. 0.1.4 之后
 - [x] 发布 = 验收（用户 2026-11-25 定，设计 14 D8）：milestone 里有新建 / 进行中的任务（含 Epic）时拒绝发布（409 `unfinished` / MCP 文案），发布面板列出并可一键移出；发布时已完成的全部置为已验收（历史「随 <名称> 发布验收」），不再自动结转；summary 改为 delivered / verified_on_release / epics / notes；MCP `transition_milestone` 去掉 carry_over；文档、CHANGELOG（未发布段）、发布面板截图同步（未提交）
+- [x] milestone 切换器不会被撑长（用户提出）：「待规划 / 全部任务」固定在列表上方、「新建 / 管理」固定在底部，只有中间的 milestone 列表滚动；已发布的不搜索时只列最近 3 个（加当前选中的）+「查看全部已发布（N）」进管理页，搜索时全部参与匹配；`visibleReleased` 抽到 meta.ts 单测，切换器加一个渲染测试（jsdom 补 `scrollIntoView` 桩）；前端 72 例（未提交）

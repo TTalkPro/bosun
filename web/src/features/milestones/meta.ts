@@ -18,6 +18,8 @@ export const MILESTONE_STATUS_CLASS: Record<MilestoneStatus, string> = {
 export type Scope = { kind: 'milestone'; id: string } | { kind: 'backlog' } | { kind: 'all' };
 
 export const BACKLOG = 'backlog';
+/** 切换器里不搜索时已发布的只列最近几个，其余去管理页看（搜索时全部参与匹配） */
+export const RECENT_RELEASED = 3;
 export const ALL = 'all';
 
 /**
@@ -58,3 +60,13 @@ export const dateRange = (m: Pick<Milestone, 'start_date' | 'target_date'>): str
 /** 可以把任务加进去的（规划中 / 进行中），进行中在前 */
 export const assignable = (ms: Milestone[]): Milestone[] =>
   ms.filter((m) => m.status !== 'released').sort((a, b) => (a.status === 'active' ? -1 : 0) - (b.status === 'active' ? -1 : 0));
+
+/**
+ * 切换器里显示哪些已发布的（接口已按发布时间倒序）：搜索时全部参与匹配；
+ * 不搜索时只要最近 RECENT_RELEASED 个，外加当前选中的那个（老版本也要看得到勾）。
+ */
+export const visibleReleased = (milestones: Milestone[], scope: Scope, searching: boolean): Milestone[] => {
+  const released = milestones.filter((m) => m.status === 'released');
+  if (searching) return released;
+  return released.filter((m, i) => i < RECENT_RELEASED || (scope.kind === 'milestone' && m.id === scope.id));
+};

@@ -9,3 +9,8 @@ if (!('ResizeObserver' in globalThis)) {
   }
   (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver = ResizeObserverStub;
 }
+
+// jsdom 没有 scrollIntoView；cmdk 选中项变化时会调（milestone 切换器等下拉）
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import dayjs from 'dayjs';
 import type { Milestone } from '@/api/types';
-import { assignable, dateRange, dueText, resolveScope, scopeQuery } from '@/features/milestones/meta';
+import { assignable, dateRange, dueText, resolveScope, scopeQuery, visibleReleased } from '@/features/milestones/meta';
 
 const ms = (over: Partial<Milestone>): Milestone => ({
   id: 'BOS-M1', project_key: 'BOS', seq: 1, name: '0.1', description: '', status: 'planning',
@@ -97,5 +97,21 @@ describe('release helpers', () => {
       '', '### 发布范围（BOS-2）', '', '- 后端（BOS-3）',
       '', '### 其它', '', '- 大写锁定（BOS-6）', '',
     ].join('\n'));
+  });
+});
+
+describe('visibleReleased（切换器里的已发布）', () => {
+  // 接口顺序：已发布按发布时间倒序
+  const rel = [9, 8, 7, 6, 5].map((n) => ms({ id: `BOS-M${n}`, seq: n, status: 'released' }));
+  const all = [ms({ id: 'BOS-M10', seq: 10, status: 'active' }), ...rel];
+  const ids = (xs: Milestone[]) => xs.map((m) => m.id);
+  it('不搜索只要最近 3 个', () => {
+    expect(ids(visibleReleased(all, { kind: 'milestone', id: 'BOS-M10' }, false))).toEqual(['BOS-M9', 'BOS-M8', 'BOS-M7']);
+  });
+  it('当前选中的老版本也列出来', () => {
+    expect(ids(visibleReleased(all, { kind: 'milestone', id: 'BOS-M5' }, false))).toEqual(['BOS-M9', 'BOS-M8', 'BOS-M7', 'BOS-M5']);
+  });
+  it('搜索时全部参与匹配', () => {
+    expect(ids(visibleReleased(all, { kind: 'backlog' }, true))).toHaveLength(5);
   });
 });
