@@ -1,5 +1,5 @@
 # 多阶段构建：前端 → Erlang release → slim 运行镜像
-# 构建并启动：docker compose up -d --build
+# 构建并启动：scripts/docker-up.sh（镜像名 bosun:<rebar.config 里的版本>）
 
 # ---------- 前端（产物落到 /build/apps/bosun_web/priv/static） ----------
 FROM node:24-trixie-slim AS web
@@ -47,4 +47,9 @@ EXPOSE 5000
 VOLUME ["/var/lib/bosun"]
 WORKDIR /opt/bosun
 USER bosun
+# 版本标签放最后：ARG 之后的 RUN 会随版本号失效缓存，放前面每次升版都要重装 apt 包
+ARG BOSUN_VERSION=dev
+LABEL org.opencontainers.image.title="bosun" \
+      org.opencontainers.image.version="${BOSUN_VERSION}" \
+      org.opencontainers.image.source="https://github.com/TTalkPro/bosun"
 CMD ["./bin/bosun", "foreground"]

@@ -25,6 +25,10 @@ web/*.tsbuildinfo
 .vscode/
 *.swp
 
+# Docker：scripts/docker-up.sh 生成（BOSUN_VERSION 等）
+.env
+.env.tmp
+
 # Claude / tools
 .claude/settings.local.json
 .playwright-mcp/

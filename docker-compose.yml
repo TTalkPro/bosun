@@ -1,7 +1,13 @@
+# 构建 / 启动用 scripts/docker-up.sh：它从 rebar.config 读版本，写进 .env 的 BOSUN_VERSION，
+# 镜像命名为 bosun:<版本>（并打 bosun:latest）。直接跑 docker compose 时没有 BOSUN_VERSION 会报错，
+# 免得又出一个不知道是哪个版本的镜像。
 services:
   bosun:
-    build: .
-    image: bosun:local
+    build:
+      context: .
+      args:
+        BOSUN_VERSION: ${BOSUN_VERSION:?先运行 scripts/docker-up.sh（从 rebar.config 读版本），或设置 BOSUN_VERSION}
+    image: bosun:${BOSUN_VERSION:?先运行 scripts/docker-up.sh（从 rebar.config 读版本），或设置 BOSUN_VERSION}
     container_name: bosun
     # 固定 hostname：节点名是 bosun@<hostname>，Mnesia 的磁盘 schema 绑定节点名，
     # 容器重建后 hostname 一变就打不开库（所以不能用默认的容器 ID）
