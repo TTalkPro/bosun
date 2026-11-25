@@ -46,4 +46,4 @@
 
 ## 5. 依赖
 
-`{bitcask, {git_subdir, "https://github.com/DavidAlphaFox/bitcask.git", {tag, "13.1.1"}, "apps/bitcask"}}`（最低 OTP 27；13.1.0 起 bitcask 是 umbrella，按子目录依赖；干净环境按 `git_subdir` 拉取要用 13.1.1 及之后，13.1.0 这个 tag 编不出 NIF）；pre_hooks 用 cmake 编 NIF（需 cmake + libicu-dev）。release 里加 `bitcask`。
+`{bitcask, {git_subdir, "https://github.com/DavidAlphaFox/bitcask.git", {tag, "13.1.2"}, "apps/bitcask"}}`（最低 OTP 27；13.1.0 起 bitcask 是 umbrella，按子目录依赖；干净环境按 `git_subdir` 拉取要用 13.1.1 及之后，13.1.0 这个 tag 编不出 NIF）；pre_hooks 用 cmake 编 NIF（需 cmake + libicu-dev）。release 里加 `bitcask`。
